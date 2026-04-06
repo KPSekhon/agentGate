@@ -1,0 +1,9 @@
+name: default-deny-all
+description: "Catch-all deny rule. All allow policies must have priority > 0."
+priority: 0
+conditions:
+  - requester: "*"
+    environment: "*"
+    task: "*"
+grants: []
+deny: true

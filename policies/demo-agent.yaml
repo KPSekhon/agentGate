@@ -1,0 +1,21 @@
+name: demo-agent-access
+description: "Allow demo agents to read demo secrets in development/staging"
+priority: 10
+conditions:
+  - requester: "agent:demo-*"
+    environment: "development"
+    task: "*"
+  - requester: "agent:demo-*"
+    environment: "staging"
+    task: "*"
+grants:
+  - secret_ref: "op://demo-vault/api-key/credential"
+    ttl_seconds: 300
+    max_uses: 1
+  - secret_ref: "op://demo-vault/db-password/credential"
+    ttl_seconds: 300
+    max_uses: 1
+  - secret_ref: "op://demo-vault/openai-key/credential"
+    ttl_seconds: 1800
+    max_uses: 3
+deny: false

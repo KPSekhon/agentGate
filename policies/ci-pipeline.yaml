@@ -1,0 +1,30 @@
+name: ci-deploy-access
+description: "CI pipelines get time-limited deploy key access"
+priority: 15
+conditions:
+  - requester: "agent:github-actions"
+    environment: "ci"
+    task: "deploy"
+  - requester: "agent:github-actions"
+    environment: "ci"
+    task: "build"
+grants:
+  - secret_ref: "op://ci-vault/deploy-key/credential"
+    ttl_seconds: 900
+    max_uses: 1
+  - secret_ref: "op://ci-vault/npm-token/credential"
+    ttl_seconds: 600
+    max_uses: 1
+deny: false
+
+---
+
+name: ci-deny-production
+description: "CI agents must never access production secrets directly"
+priority: 100
+conditions:
+  - requester: "agent:github-actions"
+    environment: "production"
+    task: "*"
+grants: []
+deny: true

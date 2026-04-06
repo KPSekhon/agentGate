@@ -1,0 +1,18 @@
+name: dev-team-access
+description: "Allow developer users access to dev/staging secrets and SSH keys"
+priority: 10
+conditions:
+  - requester: "user:*"
+    environment: "development"
+    task: "*"
+  - requester: "user:*"
+    environment: "staging"
+    task: "deploy"
+grants:
+  - secret_ref: "op://dev-vault/*/credential"
+    ttl_seconds: 3600
+    max_uses: 1
+  - secret_ref: "ssh://dev-deploy-key"
+    ttl_seconds: 1800
+    max_uses: 1
+deny: false

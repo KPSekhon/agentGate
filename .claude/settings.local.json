@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(agentgate --version)",
+      "Bash(agentgate policy:*)",
+      "Bash(timeout 5 python -c \":*)"
+    ]
+  }
+}
