@@ -3,7 +3,7 @@ import Sidebar from "@/components/Sidebar";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AgentGate — Credential Broker Dashboard",
+  title: "AgentGate — Credential broker Dashboard",
   description: "Runtime credential broker for AI agents and developer workflows",
 };
 
