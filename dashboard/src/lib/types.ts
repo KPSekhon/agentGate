@@ -5,7 +5,7 @@ export interface AuditLog {
   environment: string;
   task: string;
   secret_ref: string;
-  action: "granted" | "denied" | "released" | "expired";
+  action: "granted" | "denied" | "released" | "expired" | "exchanged" | "revoked" | "rate_limited";
   policy_name: string;
   ttl_seconds: number;
   anomaly_score: number;
@@ -16,6 +16,20 @@ export interface AuditStats {
   denied_requests_today: number;
   active_grants: number;
   anomaly_alerts_today: number;
+}
+
+export interface GrantResponse {
+  grant_id: string;
+  expires_at: string;
+  ttl_seconds: number;
+  uses_remaining: number;
+  policy: string;
+}
+
+export interface SecretResponse {
+  grant_id: string;
+  secret_value: string;
+  uses_remaining: number;
 }
 
 export interface Policy {

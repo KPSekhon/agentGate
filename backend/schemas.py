@@ -29,9 +29,10 @@ class AuditStats(BaseModel):
     anomaly_alerts_today: int
 
 
-# --- Agent ---
+# --- Agent: Two-Phase Grant Flow ---
 
 class SecretRequest(BaseModel):
+    """Phase 1 request: ask for a credential grant."""
     agent_name: str
     environment: str
     task: str
@@ -39,12 +40,25 @@ class SecretRequest(BaseModel):
     requested_ttl: int = 300
 
 
-class SecretResponse(BaseModel):
+class GrantResponse(BaseModel):
+    """Phase 1 response: grant token + metadata, NO secret value."""
     grant_id: str
-    secret_value: str
     expires_at: datetime
     ttl_seconds: int
+    uses_remaining: int
     policy: str
+
+
+class ExchangeRequest(BaseModel):
+    """Phase 2 request: exchange grant_id for the actual secret."""
+    grant_id: str
+
+
+class SecretResponse(BaseModel):
+    """Phase 2 response: the actual secret value."""
+    grant_id: str
+    secret_value: str
+    uses_remaining: int
 
 
 class DeniedResponse(BaseModel):
@@ -54,6 +68,10 @@ class DeniedResponse(BaseModel):
 
 class ReleaseRequest(BaseModel):
     grant_id: str
+
+
+class RevokeAgentRequest(BaseModel):
+    agent_name: str
 
 
 # --- SSH ---

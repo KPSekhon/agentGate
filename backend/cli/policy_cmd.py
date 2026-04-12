@@ -32,7 +32,7 @@ def list_policies():
         conds = "; ".join(
             f"{c.requester}@{c.environment}/{c.task}" for c in p.conditions
         )
-        grants = "; ".join(g.secret_ref for g in p.grants) if not p.deny else "—"
+        grants = "; ".join(g.secret_ref for g in p.grants) if not p.deny else "-"
         table.add_row(
             str(p.priority),
             p.name,
@@ -52,14 +52,14 @@ def validate_policies():
 
     path = Path(settings.policy_dir)
     if not path.exists():
-        click.echo(click.style("ERROR", fg="red") + f" — Policy directory not found: {path}")
+        click.echo(click.style("ERROR", fg="red") + f" - Policy directory not found: {path}")
         return
 
     try:
         policies = load_policies_from_directory(path)
-        click.echo(click.style("OK", fg="green") + f" — {len(policies)} policies loaded successfully")
+        click.echo(click.style("OK", fg="green") + f" - {len(policies)} policies loaded successfully")
         for p in policies:
             icon = "DENY:" if p.deny else "  OK:"
             click.echo(f"  {icon} {p.name} (priority={p.priority})")
     except ValueError as exc:
-        click.echo(click.style("ERROR", fg="red") + f" — {exc}")
+        click.echo(click.style("ERROR", fg="red") + f" - {exc}")

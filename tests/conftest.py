@@ -1,17 +1,25 @@
 from __future__ import annotations
 
-import os
 import pytest
-import pytest_asyncio
 from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
-def _set_demo_mode(monkeypatch, tmp_path):
-    """Ensure tests run in demo mode with a temp database."""
-    monkeypatch.setenv("AGENTGATE_MODE", "demo")
-    monkeypatch.setenv("AGENTGATE_DB_URL", f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    monkeypatch.setenv("AGENTGATE_POLICY_DIR", str(Path(__file__).parent.parent / "policies"))
+async def _setup_db(tmp_path):
+    """Configure a temp database for each test."""
+    import backend.database as db_mod
+
+    db_url = f"sqlite+aiosqlite:///{tmp_path}/test.db"
+    db_mod.configure(db_url)
+
+    async with db_mod._get_engine().begin() as conn:
+        await conn.run_sync(db_mod.Base.metadata.create_all)
+
+    yield
+
+    await db_mod._get_engine().dispose()
+    db_mod._engine = None
+    db_mod._async_session = None
 
 
 @pytest.fixture

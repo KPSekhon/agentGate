@@ -53,7 +53,7 @@ async def _tail(limit: int, action: str | None):
             click.style(entry.action.upper(), fg=action_style),
             entry.requester,
             entry.secret_ref,
-            entry.policy_name or "—",
+            entry.policy_name or "-",
             f"[{anomaly_style}]{anomaly_str}[/{anomaly_style}]",
         )
 

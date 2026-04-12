@@ -1,0 +1,18 @@
+# Example .agentgate.yaml -- place as .agentgate.yaml in your project root.
+#
+# This file declares what secrets your project needs and maps them to
+# environment variable names. When you run `agentgate run -- ./your-script.sh`,
+# it reads this config instead of requiring manual --secret flags.
+
+environment: development
+task: deploy
+
+secrets:
+  - ref: "op://dev-vault/openai/api-key"
+    env_var: "OPENAI_API_KEY"
+
+  - ref: "op://dev-vault/database/password"
+    env_var: "DATABASE_PASSWORD"
+
+  - ref: "op://dev-vault/github/token"
+    env_var: "GH_TOKEN"

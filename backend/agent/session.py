@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from backend.audit.logger import log_event
 from backend.database import async_session
@@ -13,6 +13,15 @@ from backend.secrets.provider import SecretProvider
 
 
 class AgentSessionManager:
+    """Manages two-phase credential grants for AI agents.
+
+    Phase 1: Agent requests a grant -> receives an opaque grant_id + metadata (no secret).
+    Phase 2: Agent exchanges the grant_id -> receives the secret value (uses_remaining decremented).
+
+    This ensures the secret is only delivered when the agent actively needs it,
+    and each exchange is tracked and use-limited.
+    """
+
     def __init__(self, engine: PolicyEngine, provider: SecretProvider) -> None:
         self.engine = engine
         self.provider = provider
@@ -28,6 +37,12 @@ class AgentSessionManager:
     ) -> dict:
         requester = f"agent:{agent_name}"
 
+        # --- Rate limiting ---
+        rate_result = await self._check_rate_limit(requester, source_ip)
+        if rate_result is not None:
+            return rate_result
+
+        # --- Policy evaluation ---
         grant, policy = self.engine.evaluate(requester, environment, task, secret_ref)
 
         if grant is None:
@@ -40,7 +55,17 @@ class AgentSessionManager:
                 policy_name=policy.name if policy else "no-match",
                 source_ip=source_ip,
             )
-            reason = f"Denied by policy '{policy.name}'" if policy else "No matching policy"
+            if policy and policy.deny:
+                reason = (
+                    f"Explicitly denied by policy '{policy.name}'. "
+                    f"This policy blocks {requester} in environment '{environment}'."
+                )
+            else:
+                reason = (
+                    f"No policy grants '{requester}' access to '{secret_ref}' "
+                    f"in environment '{environment}' for task '{task}'. "
+                    f"Define a policy with matching conditions and grants."
+                )
             return {"error": "access_denied", "reason": reason}
 
         # Use the lesser of requested TTL and policy TTL
@@ -48,10 +73,7 @@ class AgentSessionManager:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl)
 
-        # Resolve the actual secret
-        secret_value = await self.provider.resolve(secret_ref)
-
-        # Log the grant
+        # Log the grant (Phase 1 -- no secret resolved yet)
         audit_entry = await log_event(
             requester=requester,
             environment=environment,
@@ -78,14 +100,62 @@ class AgentSessionManager:
             await session.refresh(grant_record)
 
         # Schedule auto-expiry
-        asyncio.create_task(self._expire_grant(grant_record.id, ttl, requester, environment, task, secret_ref))
+        asyncio.create_task(
+            self._expire_grant(grant_record.id, ttl, requester, environment, task, secret_ref)
+        )
 
+        # Phase 1 response: grant token + metadata, NO secret value
         return {
             "grant_id": grant_record.id,
-            "secret_value": secret_value,
             "expires_at": expires_at,
             "ttl_seconds": ttl,
+            "uses_remaining": grant.max_uses,
             "policy": policy.name,
+        }
+
+    async def exchange_grant(self, grant_id: str, source_ip: str = "") -> dict:
+        """Phase 2: Exchange a grant_id for the actual secret value.
+
+        Decrements uses_remaining. When uses hit 0, the grant is auto-revoked.
+        """
+        async with async_session() as session:
+            result = await session.execute(
+                select(SecretGrant).where(SecretGrant.id == grant_id)
+            )
+            record = result.scalar_one_or_none()
+
+            if not record:
+                return {"error": "not_found", "reason": f"Grant '{grant_id}' does not exist."}
+            if record.revoked:
+                return {"error": "revoked", "reason": "This grant has been revoked."}
+            expires = record.expires_at.replace(tzinfo=timezone.utc) if record.expires_at.tzinfo is None else record.expires_at
+            if expires < datetime.now(timezone.utc):
+                return {"error": "expired", "reason": "This grant has expired."}
+            if record.uses_remaining <= 0:
+                return {"error": "exhausted", "reason": "No remaining uses on this grant."}
+
+            # Decrement uses
+            record.uses_remaining -= 1
+            if record.uses_remaining <= 0:
+                record.revoked = True
+            await session.commit()
+
+        # Resolve the secret
+        secret_value = await self.provider.resolve(record.secret_ref)
+
+        await log_event(
+            requester=record.requester,
+            environment="",
+            task="",
+            secret_ref=record.secret_ref,
+            action="exchanged",
+            source_ip=source_ip,
+        )
+
+        return {
+            "grant_id": grant_id,
+            "secret_value": secret_value,
+            "uses_remaining": record.uses_remaining,
         }
 
     async def release_grant(self, grant_id: str) -> dict:
@@ -95,9 +165,9 @@ class AgentSessionManager:
             )
             record = result.scalar_one_or_none()
             if not record:
-                return {"error": "not_found", "reason": "Grant not found"}
+                return {"error": "not_found", "reason": f"Grant '{grant_id}' does not exist."}
             if record.revoked:
-                return {"error": "already_revoked", "reason": "Grant already revoked"}
+                return {"error": "already_revoked", "reason": "Grant already revoked."}
 
             record.revoked = True
             await session.commit()
@@ -110,6 +180,74 @@ class AgentSessionManager:
             action="released",
         )
         return {"status": "released", "grant_id": grant_id}
+
+    async def revoke_agent(self, agent_name: str) -> dict:
+        """Revoke ALL active grants for an agent. Used for incident response."""
+        requester = f"agent:{agent_name}"
+        now = datetime.now(timezone.utc)
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(SecretGrant).where(
+                    SecretGrant.requester == requester,
+                    SecretGrant.revoked == False,
+                    SecretGrant.expires_at > now,
+                )
+            )
+            active_grants = list(result.scalars().all())
+
+            if not active_grants:
+                return {"status": "no_active_grants", "agent": agent_name, "revoked_count": 0}
+
+            for grant in active_grants:
+                grant.revoked = True
+            await session.commit()
+
+        # Log each revocation
+        for grant in active_grants:
+            await log_event(
+                requester=requester,
+                environment="",
+                task="",
+                secret_ref=grant.secret_ref,
+                action="revoked",
+            )
+
+        return {
+            "status": "revoked",
+            "agent": agent_name,
+            "revoked_count": len(active_grants),
+        }
+
+    async def _check_rate_limit(self, requester: str, source_ip: str) -> dict | None:
+        """Per-agent rate limiting: max 30 requests per minute."""
+        from sqlalchemy import func
+        one_min_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+        async with async_session() as session:
+            from backend.models import AuditLog
+            result = await session.execute(
+                select(func.count(AuditLog.id)).where(
+                    AuditLog.requester == requester,
+                    AuditLog.timestamp >= one_min_ago,
+                )
+            )
+            count = result.scalar() or 0
+
+        if count >= 30:
+            await log_event(
+                requester=requester,
+                environment="",
+                task="",
+                secret_ref="",
+                action="rate_limited",
+                source_ip=source_ip,
+            )
+            return {
+                "error": "rate_limited",
+                "reason": f"Agent '{requester}' exceeded 30 requests/minute. Wait before retrying.",
+            }
+        return None
 
     async def _expire_grant(
         self,

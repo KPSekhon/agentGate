@@ -6,7 +6,7 @@ import click
 @click.group()
 @click.version_option(version="0.1.0", prog_name="agentgate")
 def cli():
-    """AgentGate — Runtime Credential Broker for AI Agents."""
+    """AgentGate - Runtime Credential Broker for AI Agents."""
     pass
 
 

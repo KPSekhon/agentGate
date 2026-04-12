@@ -8,6 +8,9 @@ const actionColors: Record<string, string> = {
   denied: "text-red-400",
   released: "text-blue-400",
   expired: "text-yellow-400",
+  exchanged: "text-cyan-400",
+  revoked: "text-orange-400",
+  rate_limited: "text-red-500",
 };
 
 export default function LiveFeed() {
