@@ -5,7 +5,7 @@ a runtime credential broker for ai agents. because giving your agent a raw `.env
 ---
 
 <!-- replace with your youtube link -->
-[![watch the demo](https://img.shields.io/badge/watch%20demo-youtube-red?style=for-the-badge&logo=youtube)](YOUR_YOUTUBE_LINK_HERE)
+[![watch the demo](https://img.shields.io/badge/watch%20demo-youtube-red?style=for-the-badge&logo=youtube)](https://youtu.be/jI86jMFL8Z0)
 
 ---
 
