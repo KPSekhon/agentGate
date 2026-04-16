@@ -218,14 +218,16 @@ async def test_revoke_agent_all_grants():
 
 @pytest.mark.asyncio
 async def test_rate_limiting_rejects_excess_requests():
-    """Seed the audit log with 30 entries, then the 31st request should be rate-limited."""
+    """Seed the audit log with entries at the rate limit, then the next request should be rate-limited."""
     from backend.models import AuditLog
     from backend.database import async_session
+    from backend.config import settings
     from datetime import datetime, timezone
 
-    # Seed 30 audit entries for agent:demo-flood to simulate a burst
+    limit = settings.rate_limit_per_minute
+    # Seed entries up to the rate limit for agent:demo-flood
     async with async_session() as session:
-        for i in range(30):
+        for i in range(limit):
             entry = AuditLog(
                 requester="agent:demo-flood",
                 environment="development",

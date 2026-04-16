@@ -184,14 +184,14 @@ class AgentSessionManager:
     async def revoke_agent(self, agent_name: str) -> dict:
         """Revoke ALL active grants for an agent. Used for incident response."""
         requester = f"agent:{agent_name}"
-        now = datetime.now(timezone.utc)
 
         async with async_session() as session:
+            # Select all non-revoked grants (skip expires_at comparison to avoid
+            # timezone-naive vs timezone-aware issues with SQLite)
             result = await session.execute(
                 select(SecretGrant).where(
                     SecretGrant.requester == requester,
                     SecretGrant.revoked == False,
-                    SecretGrant.expires_at > now,
                 )
             )
             active_grants = list(result.scalars().all())
@@ -220,9 +220,12 @@ class AgentSessionManager:
         }
 
     async def _check_rate_limit(self, requester: str, source_ip: str) -> dict | None:
-        """Per-agent rate limiting: max 30 requests per minute."""
+        """Per-agent rate limiting based on configured threshold."""
+        from backend.config import settings
         from sqlalchemy import func
-        one_min_ago = datetime.now(timezone.utc) - timedelta(minutes=1)
+        limit = settings.rate_limit_per_minute
+        # Use naive UTC to match SQLite's stored format (no timezone suffix)
+        one_min_ago = datetime.utcnow() - timedelta(minutes=1)
 
         async with async_session() as session:
             from backend.models import AuditLog
@@ -234,7 +237,7 @@ class AgentSessionManager:
             )
             count = result.scalar() or 0
 
-        if count >= 30:
+        if count >= limit:
             await log_event(
                 requester=requester,
                 environment="",
@@ -245,7 +248,7 @@ class AgentSessionManager:
             )
             return {
                 "error": "rate_limited",
-                "reason": f"Agent '{requester}' exceeded 30 requests/minute. Wait before retrying.",
+                "reason": f"Agent '{requester}' exceeded {limit} requests/minute. Wait before retrying.",
             }
         return None
 

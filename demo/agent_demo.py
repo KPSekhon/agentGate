@@ -141,7 +141,7 @@ def main():
     # First, create a few grants
     for i in range(3):
         httpx.post(f"{BASE_URL}/agent/request-secret", json={
-            "agent_name": "rogue-agent",
+            "agent_name": "demo-rogue",
             "environment": "development",
             "task": f"task-{i}",
             "secret_ref": "op://demo-vault/api-key/credential",
@@ -152,7 +152,7 @@ def main():
 
     r = httpx.post(
         f"{BASE_URL}/agent/revoke-agent",
-        json={"agent_name": "rogue-agent"},
+        json={"agent_name": "demo-rogue"},
         headers=HEADERS,
     )
     data = r.json()

@@ -1,56 +1,97 @@
-# AgentGate
+# agentgate
 
-**Runtime Credential Broker for AI Agents and Developer Workflows**
-
-AgentGate gives AI agents, scripts, and CI pipelines scoped, time-limited access to secrets -- with policy enforcement, zero plaintext exposure, and full audit trails. Built on the 1Password SDK.
+a runtime credential broker for ai agents. because giving your agent a raw `.env` file and hoping for the best is not a security strategy.
 
 ---
 
-## The Problem
+<!-- replace with your youtube link -->
+[![watch the demo](https://img.shields.io/badge/watch%20demo-youtube-red?style=for-the-badge&logo=youtube)](YOUR_YOUTUBE_LINK_HERE)
 
-Modern developer workflows have a secret sprawl problem. Credentials live in `.env` files checked into repos, pasted into CI configs, embedded in LLM prompts, and shared over Slack. AI agents make this worse: they need credentials to be useful, but giving an agent unrestricted access to secrets is a governance disaster waiting to happen.
+---
 
-AgentGate solves this by acting as a **credential broker** -- agents and scripts request access for a specific task, get a time-scoped grant, and never see the raw secret in plaintext storage. Every request is evaluated against a YAML policy, every grant has a TTL, and every action is logged.
+## the problem
 
-## Architecture
+ai agents need secrets to do anything useful -- api keys, database passwords, deploy tokens. right now those secrets live in `.env` files, get pasted into ci configs, embedded in llm prompts, and shared over slack. there's no ttl, no scope, no audit trail, and no kill switch when an agent goes rogue.
+
+agentgate sits between your agent and your secrets. agents request access for a specific task, get a time-scoped grant, and never see the actual secret until they explicitly exchange the grant for it. every request hits a yaml policy engine, every grant has a ttl and use limit, and every action is logged.
+
+## how it works
+
+the core idea is a **two-phase grant flow**. the agent never gets the secret on the first call.
 
 ```
-                         Two-Phase Grant Flow
-                         ====================
-
- AI Agent                   AgentGate                     1Password SDK
- --------                   ---------                     -------------
+ ai agent                    agentgate                     1password
+ --------                    ---------                     ---------
+    |                            |                              |
+    |-- phase 1: request ------>|                              |
+    |   (agent, env, task, ref) |-- evaluate policy            |
+    |                           |-- check rate limit           |
+    |                           |-- log "granted"              |
+    |<-- grant_id + metadata ---|   (no secret here)           |
     |                           |                              |
-    |-- Phase 1: Request ------>|                              |
-    |   (agent, env, task, ref) |-- Evaluate policy            |
-    |                           |-- Check rate limit           |
-    |                           |-- Log "granted"              |
-    |<-- grant_id + metadata ---|   (no secret returned)       |
-    |                           |                              |
-    |-- Phase 2: Exchange ----->|                              |
-    |   (grant_id)              |-- Validate grant             |
-    |                           |-- Decrement uses ----------->|-- Resolve secret
+    |-- phase 2: exchange ----->|                              |
+    |   (grant_id)              |-- validate grant             |
+    |                           |-- decrement uses ----------->|-- resolve secret
     |                           |<-----------------------------|
     |<-- secret_value ----------|                              |
-    |                           |-- Log "exchanged"            |
+    |                           |-- log "exchanged"            |
     |                           |                              |
-    |-- Release --------------->|                              |
-    |   (grant_id)              |-- Revoke grant               |
-    |                           |-- Log "released"             |
+    |-- release --------------->|                              |
+    |   (grant_id)              |-- revoke grant               |
+    |                           |-- log "released"             |
 ```
 
-The secret is never returned during the grant request. It's only delivered during an explicit exchange, which is tracked, use-limited, and auto-revoked.
+phase 1 gives you a grant token. phase 2 gives you the secret. the grant is single-use by default -- once you exchange it, it's gone. if you never exchange it, it auto-expires.
 
-## Features
+## what it does
 
-### 1. Policy-Based Secret Access
+### two-phase credential grant
 
-YAML policies define who can request what, under which conditions. Deny by default -- if no policy matches, the request is refused and logged.
+phase 1 -- request a grant (you get a token, not the secret):
+```bash
+curl -X POST http://localhost:8000/agent/request-secret \
+  -H "Authorization: Bearer demo-token-12345" \
+  -d '{
+    "agent_name": "docs-agent",
+    "task": "summarize-logs",
+    "secret_ref": "op://demo-vault/openai-key/credential",
+    "environment": "development",
+    "requested_ttl": 1800
+  }'
+```
+```json
+{
+  "grant_id": "a1b2c3d4-...",
+  "expires_at": "2026-04-13T17:05:00Z",
+  "ttl_seconds": 300,
+  "uses_remaining": 1,
+  "policy": "demo-agent-access"
+}
+```
+
+phase 2 -- exchange that token for the actual secret:
+```bash
+curl -X POST http://localhost:8000/agent/exchange \
+  -H "Authorization: Bearer demo-token-12345" \
+  -d '{"grant_id": "a1b2c3d4-..."}'
+```
+```json
+{
+  "grant_id": "a1b2c3d4-...",
+  "secret_value": "demo-openai-key-...",
+  "uses_remaining": 0
+}
+```
+
+uses_remaining hits 0 and the grant is auto-revoked. try to exchange it again and you get a 410 gone.
+
+### yaml policies (deny by default)
+
+everything is denied unless a policy explicitly allows it. policies are yaml files with glob matching and priority ordering.
 
 ```yaml
 # policies/demo-agent.yaml
 name: demo-agent-access
-description: "Allow demo agents to read demo secrets in development"
 priority: 10
 conditions:
   - requester: "agent:demo-*"
@@ -63,75 +104,47 @@ grants:
 deny: false
 ```
 
-The policy engine checks five things before issuing any grant: **requester identity**, **requested secret**, **current environment**, **task context**, and **TTL window validity**.
+the engine checks requester identity, secret ref, environment, task, and ttl -- then picks the highest-priority matching policy. explicit deny rules short-circuit everything.
 
-### 2. Two-Phase Credential Grant (Agent API)
+a catch-all deny at priority 0 means if you don't write a policy for it, it's blocked.
 
-Unlike a simple secret fetch, AgentGate uses a two-phase flow that separates authorization from secret delivery:
+### rate limiting
 
-**Phase 1 -- Request a grant** (no secret returned):
+10 requests per minute per agent (configurable). exceed it and you get a 429. the event is logged so you can see who's hammering your secrets.
+
+### bulk revocation
+
+agent compromised? one call kills every active grant it holds:
+
 ```bash
-curl -X POST http://localhost:8000/agent/request-secret \
-  -H "Authorization: Bearer demo-token-12345" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_name": "docs-agent",
-    "task": "summarize-logs",
-    "secret_ref": "op://demo-vault/openai-key/credential",
-    "environment": "development",
-    "requested_ttl": 1800
-  }'
+curl -X POST http://localhost:8000/agent/revoke-agent \
+  -d '{"agent_name": "compromised-agent"}'
 ```
 ```json
-{
-  "grant_id": "a1b2c3d4-...",
-  "expires_at": "2026-04-05T17:05:00Z",
-  "ttl_seconds": 300,
-  "uses_remaining": 1,
-  "policy": "demo-agent-access"
-}
+{"status": "revoked", "agent": "compromised-agent", "revoked_count": 5}
 ```
 
-**Phase 2 -- Exchange grant for secret:**
-```bash
-curl -X POST http://localhost:8000/agent/exchange \
-  -H "Authorization: Bearer demo-token-12345" \
-  -H "Content-Type: application/json" \
-  -d '{"grant_id": "a1b2c3d4-..."}'
-```
-```json
-{
-  "grant_id": "a1b2c3d4-...",
-  "secret_value": "demo-openai-key-...",
-  "uses_remaining": 0
-}
-```
+### cli runtime injection
 
-Each exchange decrements `uses_remaining`. When exhausted, the grant is auto-revoked. Grants also auto-expire via background tasks.
-
-### 3. Runtime Injection (CLI)
-
-A thin CLI wrapper that fetches secrets at runtime, injects them into a subprocess, and clears them after exit. The secret never touches disk, never appears in shell history, and never exists outside the subprocess lifetime.
+wrap any command and agentgate injects secrets into the subprocess environment. they never touch disk, never show up in shell history, and disappear when the process exits.
 
 ```bash
-# Auto-discover secrets from policies
+# auto-discover from policies
 agentgate run --task deploy --env staging -- ./deploy.sh
 
-# Explicit secret-to-env-var mapping
+# explicit mapping
 agentgate run --task deploy \
   --secret "op://vault/api-key/cred=OPENAI_API_KEY" \
   --secret "op://vault/db/pass=DATABASE_PASSWORD" \
   -- ./deploy.sh
 
-# Or use a .agentgate.yaml project config (see below)
+# or use a project config file
 agentgate run -- ./deploy.sh
 ```
 
-This mirrors exactly what `op run` and `op inject` do in 1Password's CLI, with a policy enforcement layer on top.
+### project config (`.agentgate.yaml`)
 
-### 4. Project Configuration (`.agentgate.yaml`)
-
-Projects can declare their secret requirements in a `.agentgate.yaml` file:
+drop this in your repo root and `agentgate run` picks it up automatically:
 
 ```yaml
 environment: staging
@@ -141,162 +154,118 @@ secrets:
     env_var: "OPENAI_API_KEY"
   - ref: "op://prod-vault/database/password"
     env_var: "DATABASE_PASSWORD"
-  - ref: "op://prod-vault/github/token"
-    env_var: "GH_TOKEN"
 ```
 
-When `agentgate run` finds this file (searches up the directory tree), it uses these mappings instead of requiring manual `--secret` flags. This solves the practical problem of scripts expecting specific env var names like `OPENAI_API_KEY` instead of auto-generated names from the `op://` path.
+no more `--secret` flags. no more scripts expecting `OPENAI_API_KEY` but getting `op___prod_vault___openai___api_key` because the cli auto-generated the name from the path.
 
-### 5. Rate Limiting
+### audit dashboard
 
-Per-agent rate limiting (30 requests/minute by default, configurable) prevents credential API abuse. When an agent exceeds the limit, requests are rejected with HTTP 429 and the event is logged for audit.
+a next.js dashboard that shows everything happening in real time:
 
-### 6. Bulk Revocation
+- **stat cards** -- total requests, grants, denials, active grants at a glance
+- **audit table** -- filterable log of every action with requester, secret ref, policy matched, and outcome
+- **live feed** -- websocket-powered, updates as events happen
+- **policy viewer** -- see all loaded policies with yaml preview
 
-If an agent is compromised, revoke all its active grants instantly:
+anomaly detection runs three heuristics and scores each request 0-1:
+- frequency spike: >10 requests in 5 min from the same agent (+0.4)
+- off-hours production access: requests outside 06:00-22:00 utc (+0.3)
+- new requester: never seen this identity before (+0.3)
+
+no ml. no black boxes. just rules you can read and change.
+
+### ssh key brokering
+
+register ssh public keys with metadata. before a key can be used, policy has to approve it. the dashboard tracks per-key usage and flags unencrypted private keys.
+
+## 1password integration
+
+- uses the 1password python sdk to resolve secrets from real vaults
+- secret refs use the `op://vault/item/field` uri format
+- audit schema mirrors the 1password events api
+- ssh brokering extends the 1password ssh agent with a policy layer
+- runs fully in **demo mode** without any 1password account -- mock secrets are deterministic and clearly fake
+
+## getting started
+
+you need python 3.11+ and node 18+ (for the dashboard).
 
 ```bash
-curl -X POST http://localhost:8000/agent/revoke-agent \
-  -H "Authorization: Bearer demo-token-12345" \
-  -H "Content-Type: application/json" \
-  -d '{"agent_name": "compromised-agent"}'
-```
-```json
-{"status": "revoked", "agent": "compromised-agent", "revoked_count": 5}
-```
-
-### 7. Audit Dashboard
-
-A Next.js dashboard showing a real-time log of every request. Each entry includes: timestamp, requester identity, secret name (not value), environment, task, policy matched, outcome, and duration of access.
-
-Anomaly detection flags unusual patterns:
-- **Frequency spike**: >10 requests in 5 minutes from the same requester
-- **Off-hours access**: Production requests outside 06:00-22:00
-- **New requester**: First-ever request from an unknown identity
-
-### 8. SSH Key Brokering
-
-A separate SSH key registry where developers register public keys with metadata. Before a key can be used, it must be approved by policy. The dashboard shows per-key usage and flags unencrypted private keys.
-
-This extends 1Password's SSH agent feature with a policy and approval layer.
-
-## 1Password Integration
-
-- Uses the **1Password Python SDK** (`onepassword-sdk`) to fetch secrets from a real vault
-- Secret references follow the `op://` URI format (`op://vault/item/field`) matching the `op run` mental model
-- Audit log schema mirrors the **1Password Events API** (`/v1/signinattempts`, `/v1/itemusages`)
-- SSH key brokering extends the **1Password SSH agent** with a policy and approval layer it doesn't currently have
-- Runs fully in **demo mode** without a 1Password account (deterministic mock secrets)
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+ (for the dashboard)
-
-### Backend Setup
-
-```bash
-cd agentgate
-
-# Install
+# install
 pip install -e .
 
-# (Optional) Copy and edit .env
-cp .env.example .env
-
-# Validate policies
+# check your policies
 agentgate policy validate
 agentgate policy list
 
-# Start the API server
-agentgate server start
+# start the server (demo mode, no 1password needed)
+agentgate server
 ```
 
-The server starts at `http://localhost:8000` in demo mode by default. Visit `/docs` for the interactive Swagger UI.
-
-### Dashboard Setup
+server runs at `http://localhost:8000`. hit `/docs` for the swagger ui.
 
 ```bash
-cd dashboard
-npm install
-npm run dev
+# start the dashboard
+cd dashboard && npm install && npm run dev
 ```
 
-The dashboard runs at `http://localhost:3000` and proxies API calls to the backend.
-
-### Run the Demo
+dashboard runs at `http://localhost:3000`, proxies api calls to the backend.
 
 ```bash
-# In a separate terminal, with the server running:
+# run the 60-second demo (good for screen recording)
+python demo/quick_demo.py
+
+# or the full feature demo
 python demo/agent_demo.py
 ```
 
-This demonstrates the full two-phase flow: grant requests, secret exchange, denied requests, bulk revocation, rate limiting, and anomaly detection.
+## api
 
-### CLI Demo
+| method | path | what it does |
+|--------|------|--------------|
+| `GET` | `/` | server info |
+| `GET` | `/docs` | swagger ui |
+| `GET` | `/policies` | list loaded policies |
+| `POST` | `/agent/request-secret` | phase 1: get a grant (no secret) |
+| `POST` | `/agent/exchange` | phase 2: trade grant_id for the secret |
+| `POST` | `/agent/release` | release a grant early |
+| `POST` | `/agent/revoke-agent` | kill all grants for an agent |
+| `GET` | `/audit/logs` | query audit logs |
+| `GET` | `/audit/stats` | dashboard stats |
+| `WS` | `/audit/live` | real-time audit websocket |
+| `GET` | `/ssh/keys` | list ssh keys |
+| `POST` | `/ssh/keys` | register a key |
+| `POST` | `/ssh/keys/request` | request key access |
 
-```bash
-# Inject secrets into a subprocess
-agentgate run --task deploy --env development -- env
+## config
 
-# With explicit env var mapping
-agentgate run --task deploy --secret "op://dev-vault/api-key/credential=MY_API_KEY" -- env
+all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 
-# View audit trail
-agentgate audit tail
-```
+| variable | default | what it does |
+|----------|---------|--------------|
+| `AGENTGATE_MODE` | `demo` | `demo` = mock secrets, `live` = real 1password |
+| `AGENTGATE_OP_SERVICE_ACCOUNT_TOKEN` | | 1password token (required for live mode) |
+| `AGENTGATE_AGENT_TOKEN` | `demo-token-12345` | bearer token for api auth |
+| `AGENTGATE_DB_URL` | `sqlite+aiosqlite:///./agentgate.db` | database url |
+| `AGENTGATE_POLICY_DIR` | `./policies` | where your yaml policies live |
+| `AGENTGATE_RATE_LIMIT_PER_MINUTE` | `10` | max requests per agent per minute |
 
-## API Endpoints
+## why it's built this way
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | Server info |
-| `GET` | `/docs` | Swagger UI |
-| `GET` | `/policies` | List loaded policies |
-| `POST` | `/agent/request-secret` | Phase 1: Request a credential grant (no secret) |
-| `POST` | `/agent/exchange` | Phase 2: Exchange grant_id for the actual secret |
-| `POST` | `/agent/release` | Release a grant early |
-| `POST` | `/agent/revoke-agent` | Revoke ALL grants for an agent |
-| `GET` | `/audit/logs` | Query audit logs (filterable) |
-| `GET` | `/audit/stats` | Dashboard statistics |
-| `WS` | `/audit/live` | Real-time audit WebSocket |
-| `GET` | `/ssh/keys` | List registered SSH keys |
-| `POST` | `/ssh/keys` | Register a new SSH key |
-| `POST` | `/ssh/keys/request` | Request SSH key access |
+- **two-phase flow** -- a leaked grant_id is useless after expiry or consumption. the secret only moves when the agent explicitly asks for it.
+- **deny by default** -- `default.yaml` catches everything at priority 0. you have to opt in to access, not opt out.
+- **secrets never touch disk** -- they exist in memory only. the audit log stores the `op://` reference, never the value.
+- **rate limiting is enforcement** -- anomaly detection flags things. rate limiting actually blocks them. 429, not a warning.
+- **demo mode is a first-class citizen** -- the whole system runs end-to-end without any external accounts.
+- **background ttl enforcement** -- asyncio tasks auto-revoke expired grants. you don't have to poll.
+- **transparent anomaly detection** -- three rules, a score, no mystery. you can read every heuristic in `anomaly.py`.
 
-## Configuration
+## stack
 
-AgentGate reads configuration from environment variables (with `AGENTGATE_` prefix) or a `.env` file:
+python 3.11+ / fastapi / sqlalchemy async / aiosqlite / pydantic / click
+next.js 14 / typescript / tailwind css
+websocket live feed / bearer token auth / sqlite
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AGENTGATE_MODE` | `demo` | `demo` for mock secrets, `live` for real 1Password |
-| `AGENTGATE_OP_SERVICE_ACCOUNT_TOKEN` | | 1Password token (required for `live` mode) |
-| `AGENTGATE_AGENT_TOKEN` | `demo-token-12345` | Bearer token for agent API auth |
-| `AGENTGATE_DB_URL` | `sqlite+aiosqlite:///./agentgate.db` | Database URL |
-| `AGENTGATE_POLICY_DIR` | `./policies` | Path to YAML policy files |
-| `AGENTGATE_RATE_LIMIT_PER_MINUTE` | `30` | Max requests per agent per minute |
+## license
 
-## Design Decisions
-
-- **Two-phase grant flow**: The secret is never returned during authorization. Phase 1 issues an opaque grant token; Phase 2 exchanges it for the secret. This means a leaked grant_id alone is useless after the grant expires or is consumed.
-- **Deny-by-default policy model**: `policies/default.yaml` contains a catch-all deny rule at priority 0. All allow rules must have priority > 0.
-- **Secrets never touch disk**: The secret value exists only in memory -- in the subprocess environment for CLI mode, or in the JSON response for API mode. The audit log stores only the `op://` reference, never the value.
-- **Rate limiting is enforcement, not just monitoring**: Unlike the anomaly detection (which flags but doesn't block), rate limiting actively rejects excessive requests with HTTP 429.
-- **Demo mode as first-class citizen**: The `MockSecretProvider` returns consistent, clearly-fake values (prefixed with `demo-`). The entire system runs end-to-end without any 1Password account.
-- **Background TTL enforcement**: When a grant is issued, `asyncio.create_task` schedules automatic revocation. For CLI, TTL is implicit: subprocess exits and environment is cleared.
-- **Anomaly detection is transparent**: Three rule-based heuristics produce a 0-1 score. No opaque ML models -- everything is explainable.
-- **Helpful error messages**: Denied requests explain which policy blocked the request (or that no matching policy exists), what conditions were checked, and how to fix it.
-
-## Stretch Goals
-
-- **Slack approval workflow**: For secrets marked `require_approval: true`, send approve/deny buttons to a Slack channel before issuing the grant.
-- **GitHub Actions integration**: A reusable action that configures AgentGate as the credential source, replacing `secrets: {}` injections.
-- **MCP tool server**: Expose AgentGate as an MCP server so Claude or other agents can request credentials natively through tool use.
-- **SIEM export**: Audit log export endpoint that posts to webhook endpoints in the same format as the 1Password Events API.
-
-## License
-
-MIT
+mit
