@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package agentgate;
+
+service AgentGate {
+  rpc RequestGrant(GrantRequest) returns (GrantResponse);
+  rpc ExchangeGrant(ExchangeRequest) returns (ExchangeResponse);
+  rpc ReleaseGrant(ReleaseRequest) returns (ReleaseResponse);
+  rpc RevokeAgent(RevokeAgentRequest) returns (RevokeAgentResponse);
+  rpc EvaluatePolicy(PolicyEvalRequest) returns (PolicyEvalResponse);
+  rpc HealthCheck(HealthRequest) returns (HealthResponse);
+}
+
+message GrantRequest {
+  string agent_name = 1;
+  string environment = 2;
+  string task = 3;
+  string secret_ref = 4;
+  int32 requested_ttl = 5;
+  string source_ip = 6;
+}
+
+message GrantResponse {
+  string grant_id = 1;
+  string expires_at = 2;
+  int32 ttl_seconds = 3;
+  int32 uses_remaining = 4;
+  string policy = 5;
+  string error = 6;
+  string reason = 7;
+}
+
+message ExchangeRequest {
+  string grant_id = 1;
+  string source_ip = 2;
+}
+
+message ExchangeResponse {
+  string grant_id = 1;
+  string secret_value = 2;
+  int32 uses_remaining = 3;
+  string error = 4;
+  string reason = 5;
+}
+
+message ReleaseRequest {
+  string grant_id = 1;
+}
+
+message ReleaseResponse {
+  string status = 1;
+  string grant_id = 2;
+  string error = 3;
+  string reason = 4;
+}
+
+message RevokeAgentRequest {
+  string agent_name = 1;
+}
+
+message RevokeAgentResponse {
+  string status = 1;
+  string agent = 2;
+  int32 revoked_count = 3;
+}
+
+message PolicyEvalRequest {
+  string requester = 1;
+  string environment = 2;
+  string task = 3;
+  string secret_ref = 4;
+}
+
+message PolicyEvalResponse {
+  bool allowed = 1;
+  string policy_name = 2;
+  string reason = 3;
+  int32 ttl_seconds = 4;
+  int32 max_uses = 5;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  int64 active_grants = 2;
+  int64 total_evaluations = 3;
+}

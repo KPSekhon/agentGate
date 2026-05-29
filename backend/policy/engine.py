@@ -1,17 +1,35 @@
 from __future__ import annotations
 
+import logging
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .loader import load_policies_from_directory
 from .types import Grant, Policy
 
+if TYPE_CHECKING:
+    from backend.core_client import CoreClient
+
+logger = logging.getLogger("agentgate.policy")
+
 
 class PolicyEngine:
-    """Evaluate access requests against loaded policies. Deny by default."""
+    """Evaluate access requests against loaded policies. Deny by default.
 
-    def __init__(self, policy_dir: str | Path | None = None) -> None:
+    When a CoreClient is attached, the allow/deny decision is delegated to the
+    Rust core (the Policy Decision Point). If the core is unreachable, the
+    engine falls back to native Python evaluation so the system degrades
+    gracefully and demo mode works without the core running.
+    """
+
+    def __init__(
+        self,
+        policy_dir: str | Path | None = None,
+        core_client: "CoreClient | None" = None,
+    ) -> None:
         self.policies: list[Policy] = []
+        self.core_client = core_client
         if policy_dir:
             self.load(policy_dir)
 
@@ -26,6 +44,26 @@ class PolicyEngine:
         secret_ref: str,
     ) -> tuple[Grant | None, Policy | None]:
         """Return (grant, matched_policy) or (None, None) if denied."""
+        if self.core_client is not None:
+            try:
+                return self.core_client.evaluate(
+                    requester, environment, task, secret_ref
+                )
+            except Exception as exc:  # grpc.RpcError or channel failure
+                logger.warning(
+                    "core policy decision failed (%s); falling back to native engine",
+                    exc,
+                )
+
+        return self._evaluate_native(requester, environment, task, secret_ref)
+
+    def _evaluate_native(
+        self,
+        requester: str,
+        environment: str,
+        task: str,
+        secret_ref: str,
+    ) -> tuple[Grant | None, Policy | None]:
         for policy in self.policies:
             if not self._conditions_match(policy, requester, environment, task):
                 continue

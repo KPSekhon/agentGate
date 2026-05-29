@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -11,7 +11,7 @@ from backend.models import AuditLog
 async def compute_anomaly_score(requester: str, environment: str) -> float:
     """Score 0.0–1.0 based on three heuristics."""
     score = 0.0
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     async with async_session() as session:
         # 1. Frequency spike — >10 requests in the last 5 minutes

@@ -21,6 +21,13 @@ node_modules/
 dashboard/.next/
 dashboard/out/
 
+# Rust
+target/
+
+# Go
+*.exe
+agentgate-proxy/bin/
+
 # IDE
 .vscode/
 .idea/

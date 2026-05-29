@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     rate_limit_per_minute: int = 10
 
+    # When set (e.g. "localhost:50051"), the backend delegates policy decisions
+    # to the Rust core over gRPC. The backend remains the enforcement point.
+    # Unset = use the native Python policy engine (demo mode default).
+    core_url: str = ""
+
     model_config = {
         "env_prefix": "AGENTGATE_",
         "env_file": ".env",

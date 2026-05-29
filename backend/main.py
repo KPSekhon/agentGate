@@ -25,7 +25,17 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
-    _policy_engine = PolicyEngine(settings.policy_dir)
+    core_client = None
+    if settings.core_url:
+        from backend.core_client import CoreClient
+
+        core_client = CoreClient(settings.core_url)
+        if core_client.health():
+            print(f"[agentgate] policy decisions delegated to Rust core at {settings.core_url}")
+        else:
+            print(f"[agentgate] Rust core at {settings.core_url} unreachable — using native engine with fallback")
+
+    _policy_engine = PolicyEngine(settings.policy_dir, core_client=core_client)
     provider = create_secret_provider()
 
     manager = AgentSessionManager(_policy_engine, provider)

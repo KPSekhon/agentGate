@@ -225,7 +225,7 @@ class AgentSessionManager:
         from sqlalchemy import func
         limit = settings.rate_limit_per_minute
         # Use naive UTC to match SQLite's stored format (no timezone suffix)
-        one_min_ago = datetime.utcnow() - timedelta(minutes=1)
+        one_min_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
 
         async with async_session() as session:
             from backend.models import AuditLog

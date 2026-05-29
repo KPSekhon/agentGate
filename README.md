@@ -15,6 +15,59 @@ ai agents need secrets to do anything useful -- api keys, database passwords, de
 
 agentgate sits between your agent and your secrets. agents request access for a specific task, get a time-scoped grant, and never see the actual secret until they explicitly exchange the grant for it. every request hits a yaml policy engine, every grant has a ttl and use limit, and every action is logged.
 
+## architecture
+
+agentgate is a multi-language system. each component is built in the language that fits its job.
+
+```
+ ai agent
+    │
+    │  HTTPS / mTLS
+    ▼
+┌────────────────────────┐
+│  agentgate-proxy (Go)  │   network edge
+│                        │
+│  • rate limiting       │
+│  • mTLS termination    │
+│  • bearer auth         │
+│  • structured logging  │
+│  • health / metrics    │
+└───────────┬────────────┘
+            │  HTTP (reverse proxy)
+            ▼
+┌────────────────────────┐
+│  backend (Python)      │   enforcement point (PEP)
+│  + dashboard (TS)      │
+│                        │
+│  • REST API            │
+│  • grant persistence   │
+│  • secret resolution   │
+│    (1Password SDK)     │
+│  • audit + dashboard   │
+└───────────┬────────────┘
+            │  gRPC: EvaluatePolicy
+            │  (falls back to native engine if core is down)
+            ▼
+┌────────────────────────┐
+│  agentgate-core (Rust) │   decision point (PDP)
+│                        │
+│  • HMAC-SHA256 token   │
+│    engine              │
+│  • policy engine       │
+│    (glob matching)     │
+│  • grant lifecycle     │
+│  • anomaly scoring     │
+│  • gRPC service        │
+└────────────────────────┘
+```
+
+a request flows agent → Go proxy → Python backend → Rust core. the backend is the **policy enforcement point** (PEP): it owns the REST surface, grant persistence, and secret resolution. the core is the **policy decision point** (PDP): the backend delegates the allow/deny call to it over gRPC, and falls back to a native Python engine if the core is unreachable (so demo mode runs with the core off).
+
+**why this split:**
+- **Rust** is the decision point -- cryptographic token minting/verification and policy evaluation. the security-critical logic, with memory safety and no GC pauses.
+- **Go** is the network edge -- concurrent connection handling, mTLS, rate limiting, and health checks. goroutines make this trivial.
+- **Python** is the enforcement point and orchestration layer -- REST API, grant persistence, 1Password SDK, secret resolution, CLI, and dashboard. fast to iterate on, rich ecosystem.
+
 ## how it works
 
 the core idea is a **two-phase grant flow**. the agent never gets the secret on the first call.
@@ -188,35 +241,75 @@ register ssh public keys with metadata. before a key can be used, policy has to 
 
 ## getting started
 
-you need python 3.11+ and node 18+ (for the dashboard).
+**prerequisites:** python 3.11+, node 18+, rust 1.75+, go 1.22+
 
 ```bash
-# install
+# install python backend
 pip install -e .
 
-# check your policies
-agentgate policy validate
-agentgate policy list
+# build the rust core
+cd agentgate-core && cargo build --release
 
-# start the server (demo mode, no 1password needed)
-agentgate server
+# build the go proxy
+cd agentgate-proxy && go build -o bin/agentgate-proxy ./cmd/proxy
+
+# or build everything at once
+make build
 ```
 
-server runs at `http://localhost:8000`. hit `/docs` for the swagger ui.
+### running the full stack
 
 ```bash
-# start the dashboard
-cd dashboard && npm install && npm run dev
+# 1. start the rust core (gRPC on :50051)
+make serve-core
+
+# 2. start the go proxy (HTTPS on :8443, forwards to backend)
+make serve-proxy
+
+# 3. start the python backend (REST on :8000)
+make serve-backend
+
+# 4. start the dashboard (on :3000)
+make serve-dashboard
 ```
 
-dashboard runs at `http://localhost:3000`, proxies api calls to the backend.
+### quick start (python-only, demo mode)
 
 ```bash
-# run the 60-second demo (good for screen recording)
-python demo/quick_demo.py
+agentgate server   # REST API at http://localhost:8000/docs
+cd dashboard && npm install && npm run dev  # dashboard at http://localhost:3000
+python demo/quick_demo.py  # 60-second demo
+```
 
-# or the full feature demo
-python demo/agent_demo.py
+### running tests
+
+```bash
+make test          # all tests (rust + go + python)
+make rust-test     # 15 rust tests (crypto, policy, grants)
+make go-test       # 8 go tests (rate limiting, auth, middleware)
+make python-test   # 30 python tests (policy, api, anomaly)
+
+# the python -> rust gRPC seam (skips if the core isn't running):
+#   agentgate serve --addr 127.0.0.1:50051 --policy-dir policies
+python -m pytest tests/test_core_integration.py -v   # 4 integration tests
+```
+
+### rust cli
+
+```bash
+# validate policy files
+agentgate policy-check --policy-dir policies/
+
+# dry-run a policy evaluation
+agentgate policy-eval \
+  --policy-dir policies/ \
+  --requester "agent:github-actions" \
+  --environment ci \
+  --task deploy \
+  --secret-ref "op://ci-vault/deploy-key/credential"
+
+# start the gRPC server
+agentgate serve --addr 0.0.0.0:50051 --policy-dir policies/
 ```
 
 ## api
@@ -249,22 +342,47 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 | `AGENTGATE_DB_URL` | `sqlite+aiosqlite:///./agentgate.db` | database url |
 | `AGENTGATE_POLICY_DIR` | `./policies` | where your yaml policies live |
 | `AGENTGATE_RATE_LIMIT_PER_MINUTE` | `10` | max requests per agent per minute |
+| `AGENTGATE_CORE_URL` | | delegate policy decisions to the rust core over gRPC (e.g. `localhost:50051`); unset = native python engine |
+
+**rust core (`agentgate-core`)**
+
+| variable | default | what it does |
+|----------|---------|--------------|
+| `AGENTGATE_HMAC_SECRET` | (random) | hex-encoded HMAC key for grant tokens |
+
+**go proxy (`agentgate-proxy`)**
+
+| variable | default | what it does |
+|----------|---------|--------------|
+| `AGENTGATE_PROXY_ADDR` | `:8443` | proxy listen address |
+| `AGENTGATE_BACKEND_URL` | `http://localhost:8000` | upstream backend url |
+| `AGENTGATE_RATE_LIMIT` | `60` | proxy-level rate limit per agent/min |
+| `AGENTGATE_RATE_BURST` | `10` | token bucket burst size |
+| `AGENTGATE_TLS_CERT` | | tls certificate file (enables https) |
+| `AGENTGATE_TLS_KEY` | | tls private key file |
+| `AGENTGATE_TLS_CLIENT_CA` | | client ca for mtls (requires cert+key) |
 
 ## why it's built this way
 
 - **two-phase flow** -- a leaked grant_id is useless after expiry or consumption. the secret only moves when the agent explicitly asks for it.
 - **deny by default** -- `default.yaml` catches everything at priority 0. you have to opt in to access, not opt out.
 - **secrets never touch disk** -- they exist in memory only. the audit log stores the `op://` reference, never the value.
-- **rate limiting is enforcement** -- anomaly detection flags things. rate limiting actually blocks them. 429, not a warning.
+- **cryptographic grant tokens** -- grant_ids are HMAC-SHA256 signed payloads. tampered or forged tokens are rejected at the Rust layer before hitting any database.
+- **decision/enforcement split** -- the Python backend (PEP) delegates every allow/deny call to the Rust core (PDP) over gRPC, then resolves the secret itself. if the core is unreachable it falls back to an equivalent native engine, so a core outage degrades gracefully instead of taking the broker down.
+- **rate limiting at two levels** -- the Go proxy enforces token-bucket rate limiting at the network edge. the Rust core enforces per-agent limits at the grant layer. both log violations.
+- **mtls for agent identity** -- the Go proxy supports mutual TLS. agents present client certificates, and the proxy extracts the CN and forwards it as `X-Client-CN`. no more shared bearer tokens.
 - **demo mode is a first-class citizen** -- the whole system runs end-to-end without any external accounts.
-- **background ttl enforcement** -- asyncio tasks auto-revoke expired grants. you don't have to poll.
-- **transparent anomaly detection** -- three rules, a score, no mystery. you can read every heuristic in `anomaly.py`.
+- **background ttl enforcement** -- the Rust core runs a periodic sweep to revoke expired grants. no polling required.
+- **transparent anomaly detection** -- three rules, a score, no mystery. you can read every heuristic in `anomaly.py` and `grants.rs`.
 
 ## stack
 
-python 3.11+ / fastapi / sqlalchemy async / aiosqlite / pydantic / click
-next.js 14 / typescript / tailwind css
-websocket live feed / bearer token auth / sqlite
+| layer | language | key libraries |
+|-------|----------|---------------|
+| **core** (crypto, policy, grants) | Rust | `ring` (HMAC-SHA256), `tonic` (gRPC), `clap` (CLI), `serde`/`serde_yaml` |
+| **proxy** (network edge) | Go | stdlib `net/http`, `crypto/tls` (mTLS), `log/slog` (structured logging) |
+| **backend** (orchestration) | Python | FastAPI, SQLAlchemy async, 1Password SDK, Click, Pydantic |
+| **dashboard** (UI) | TypeScript | Next.js 14, React 18, Tailwind CSS, WebSocket live feed |
 
 ## license
 
