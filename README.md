@@ -2,6 +2,9 @@
 
 a runtime credential broker for ai agents. because giving your agent a raw `.env` file and hoping for the best is not a security strategy.
 
+[![CI](https://github.com/KPSekhon/agentGate/actions/workflows/ci.yml/badge.svg)](https://github.com/KPSekhon/agentGate/actions/workflows/ci.yml)
+&nbsp;Rust · Go · Python · TypeScript
+
 ---
 
 <!-- replace with your youtube link -->
@@ -51,7 +54,7 @@ agentgate is a multi-language system. each component is built in the language th
 ┌────────────────────────┐
 │  agentgate-core (Rust) │   decision point (PDP)
 │                        │
-│  • HMAC-SHA256 token   │
+│  • Ed25519 token       │
 │    engine              │
 │  • policy engine       │
 │    (glob matching)     │
@@ -285,13 +288,13 @@ python demo/quick_demo.py  # 60-second demo
 
 ```bash
 make test          # all tests (rust + go + python)
-make rust-test     # 15 rust tests (crypto, policy, grants)
+make rust-test     # 20 rust tests (incl. property-based crypto tests)
 make go-test       # 8 go tests (rate limiting, auth, middleware)
 make python-test   # 30 python tests (policy, api, anomaly)
 
 # the python -> rust gRPC seam (skips if the core isn't running):
 #   agentgate serve --addr 127.0.0.1:50051 --policy-dir policies
-python -m pytest tests/test_core_integration.py -v   # 4 integration tests
+python -m pytest tests/test_core_integration.py -v   # 8 integration tests (policy + token crypto + public key)
 ```
 
 ### rust cli
@@ -348,7 +351,7 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 
 | variable | default | what it does |
 |----------|---------|--------------|
-| `AGENTGATE_HMAC_SECRET` | (random) | hex-encoded HMAC key for grant tokens |
+| `AGENTGATE_ED25519_SEED` | (random) | hex-encoded 32-byte Ed25519 seed; fixed seed = stable signing key across restarts |
 
 **go proxy (`agentgate-proxy`)**
 
@@ -367,8 +370,8 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 - **two-phase flow** -- a leaked grant_id is useless after expiry or consumption. the secret only moves when the agent explicitly asks for it.
 - **deny by default** -- `default.yaml` catches everything at priority 0. you have to opt in to access, not opt out.
 - **secrets never touch disk** -- they exist in memory only. the audit log stores the `op://` reference, never the value.
-- **cryptographic grant tokens** -- grant_ids are HMAC-SHA256 signed payloads. tampered or forged tokens are rejected at the Rust layer before hitting any database.
-- **decision/enforcement split** -- the Python backend (PEP) delegates every allow/deny call to the Rust core (PDP) over gRPC, then resolves the secret itself. if the core is unreachable it falls back to an equivalent native engine, so a core outage degrades gracefully instead of taking the broker down.
+- **cryptographic capability tokens** -- with the core wired in, a grant is an `ag2.<payload>.<sig>` token: **Ed25519**-signed claims (requester, secret_ref, expiry, uses, key id) minted by the Rust core. the agent presents it on exchange, and tampered, forged, or expired tokens are rejected at the Rust layer before the backend touches the database. because it's a public-key signature, verifiers need only the **public key** (published over a `PublicKey` RPC) — never the signing key. the token is stateless proof; use-count and revocation are enforced from persistent state. property-based tests assert any single-bit mutation is rejected. full write-up in [SECURITY.md](SECURITY.md).
+- **decision/enforcement split** -- the Python backend (PEP) delegates every allow/deny call and all token crypto to the Rust core (PDP) over gRPC, then resolves the secret itself. if the core is unreachable it falls back to an equivalent native engine, so a core outage degrades gracefully instead of taking the broker down.
 - **rate limiting at two levels** -- the Go proxy enforces token-bucket rate limiting at the network edge. the Rust core enforces per-agent limits at the grant layer. both log violations.
 - **mtls for agent identity** -- the Go proxy supports mutual TLS. agents present client certificates, and the proxy extracts the CN and forwards it as `X-Client-CN`. no more shared bearer tokens.
 - **demo mode is a first-class citizen** -- the whole system runs end-to-end without any external accounts.
@@ -379,7 +382,7 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 
 | layer | language | key libraries |
 |-------|----------|---------------|
-| **core** (crypto, policy, grants) | Rust | `ring` (HMAC-SHA256), `tonic` (gRPC), `clap` (CLI), `serde`/`serde_yaml` |
+| **core** (crypto, policy, grants) | Rust | `ring` (Ed25519), `tonic` (gRPC), `clap` (CLI), `serde`/`serde_yaml`, `proptest` (property tests) |
 | **proxy** (network edge) | Go | stdlib `net/http`, `crypto/tls` (mTLS), `log/slog` (structured logging) |
 | **backend** (orchestration) | Python | FastAPI, SQLAlchemy async, 1Password SDK, Click, Pydantic |
 | **dashboard** (UI) | TypeScript | Next.js 14, React 18, Tailwind CSS, WebSocket live feed |

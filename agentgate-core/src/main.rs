@@ -35,9 +35,11 @@ enum Commands {
         #[arg(long, default_value_t = 10)]
         rate_limit: u32,
 
-        /// HMAC secret key (hex-encoded, 32+ bytes recommended)
-        #[arg(long, env = "AGENTGATE_HMAC_SECRET")]
-        hmac_secret: Option<String>,
+        /// Ed25519 signing seed (hex-encoded, 32 bytes). A fixed seed keeps the
+        /// signing key — and therefore previously issued tokens — stable across
+        /// restarts. Omit to generate an ephemeral key (demo mode).
+        #[arg(long, env = "AGENTGATE_ED25519_SEED")]
+        signing_seed: Option<String>,
     },
 
     /// Validate policy files
@@ -81,18 +83,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             addr,
             policy_dir,
             rate_limit,
-            hmac_secret,
+            signing_seed,
         } => {
-            let token_engine = match hmac_secret {
-                Some(hex_key) => {
-                    let bytes = hex::decode(&hex_key)?;
-                    Arc::new(TokenEngine::new(&bytes))
+            let token_engine = match signing_seed {
+                Some(hex_seed) => {
+                    let bytes = hex::decode(&hex_seed)?;
+                    if bytes.len() != 32 {
+                        return Err(format!(
+                            "AGENTGATE_ED25519_SEED must be 32 bytes (64 hex chars), got {}",
+                            bytes.len()
+                        )
+                        .into());
+                    }
+                    Arc::new(TokenEngine::from_seed(&bytes)?)
                 }
                 None => {
-                    tracing::warn!("no HMAC secret provided — generating random key (tokens won't survive restarts)");
+                    tracing::warn!(
+                        "no signing seed provided — generating ephemeral Ed25519 key (tokens won't survive restarts)"
+                    );
                     Arc::new(TokenEngine::from_random()?)
                 }
             };
+
+            tracing::info!(
+                algorithm = "Ed25519",
+                key_id = token_engine.key_id(),
+                public_key = token_engine.public_key_hex(),
+                "token signing key ready"
+            );
 
             let mut policy_engine = PolicyEngine::new();
             let count = policy_engine.load_directory(&policy_dir)?;

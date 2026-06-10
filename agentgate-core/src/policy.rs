@@ -72,6 +72,12 @@ pub struct PolicyEngine {
     policies: Vec<Policy>,
 }
 
+impl Default for PolicyEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PolicyEngine {
     pub fn new() -> Self {
         Self {
@@ -94,11 +100,10 @@ impl PolicyEngine {
                 continue;
             }
 
-            let content =
-                std::fs::read_to_string(&path).map_err(|e| PolicyError::IoError {
-                    path: path.display().to_string(),
-                    source: e,
-                })?;
+            let content = std::fs::read_to_string(&path).map_err(|e| PolicyError::IoError {
+                path: path.display().to_string(),
+                source: e,
+            })?;
 
             for doc in content.split("\n---") {
                 let trimmed = doc.trim();
@@ -114,16 +119,14 @@ impl PolicyEngine {
             }
         }
 
-        self.policies
-            .sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
 
         Ok(self.policies.len())
     }
 
     pub fn load_policies(&mut self, policies: Vec<Policy>) {
         self.policies = policies;
-        self.policies
-            .sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
     }
 
     pub fn evaluate(
@@ -146,9 +149,7 @@ impl PolicyEngine {
             }
 
             for grant in &policy.grants {
-                if glob_match(&grant.secret_ref, secret_ref)
-                    || grant.secret_ref == secret_ref
-                {
+                if glob_match(&grant.secret_ref, secret_ref) || grant.secret_ref == secret_ref {
                     return EvalResult {
                         grant: Some(grant.clone()),
                         policy: Some(policy.clone()),
@@ -288,12 +289,7 @@ mod tests {
     #[test]
     fn unknown_agent_denied_by_default() {
         let engine = make_engine();
-        let result = engine.evaluate(
-            "agent:unknown",
-            "staging",
-            "test",
-            "op://vault/secret/cred",
-        );
+        let result = engine.evaluate("agent:unknown", "staging", "test", "op://vault/secret/cred");
         assert!(result.grant.is_none());
         assert_eq!(result.policy.unwrap().name, "default-deny");
     }

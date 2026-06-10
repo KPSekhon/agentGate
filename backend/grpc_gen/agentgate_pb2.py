@@ -24,37 +24,51 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0f\x61gentgate.proto\x12\tagentgate\"\x83\x01\n\x0cGrantRequest\x12\x12\n\nagent_name\x18\x01 \x01(\t\x12\x13\n\x0b\x65nvironment\x18\x02 \x01(\t\x12\x0c\n\x04task\x18\x03 \x01(\t\x12\x12\n\nsecret_ref\x18\x04 \x01(\t\x12\x15\n\rrequested_ttl\x18\x05 \x01(\x05\x12\x11\n\tsource_ip\x18\x06 \x01(\t\"\x91\x01\n\rGrantResponse\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x12\n\nexpires_at\x18\x02 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x03 \x01(\x05\x12\x16\n\x0euses_remaining\x18\x04 \x01(\x05\x12\x0e\n\x06policy\x18\x05 \x01(\t\x12\r\n\x05\x65rror\x18\x06 \x01(\t\x12\x0e\n\x06reason\x18\x07 \x01(\t\"6\n\x0f\x45xchangeRequest\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x11\n\tsource_ip\x18\x02 \x01(\t\"q\n\x10\x45xchangeResponse\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x14\n\x0csecret_value\x18\x02 \x01(\t\x12\x16\n\x0euses_remaining\x18\x03 \x01(\x05\x12\r\n\x05\x65rror\x18\x04 \x01(\t\x12\x0e\n\x06reason\x18\x05 \x01(\t\"\"\n\x0eReleaseRequest\x12\x10\n\x08grant_id\x18\x01 \x01(\t\"R\n\x0fReleaseResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x10\n\x08grant_id\x18\x02 \x01(\t\x12\r\n\x05\x65rror\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\"(\n\x12RevokeAgentRequest\x12\x12\n\nagent_name\x18\x01 \x01(\t\"K\n\x13RevokeAgentResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\r\n\x05\x61gent\x18\x02 \x01(\t\x12\x15\n\rrevoked_count\x18\x03 \x01(\x05\"]\n\x11PolicyEvalRequest\x12\x11\n\trequester\x18\x01 \x01(\t\x12\x13\n\x0b\x65nvironment\x18\x02 \x01(\t\x12\x0c\n\x04task\x18\x03 \x01(\t\x12\x12\n\nsecret_ref\x18\x04 \x01(\t\"q\n\x12PolicyEvalResponse\x12\x0f\n\x07\x61llowed\x18\x01 \x01(\x08\x12\x13\n\x0bpolicy_name\x18\x02 \x01(\t\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x04 \x01(\x05\x12\x10\n\x08max_uses\x18\x05 \x01(\x05\"\x0f\n\rHealthRequest\"R\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x15\n\ractive_grants\x18\x02 \x01(\x03\x12\x19\n\x11total_evaluations\x18\x03 \x01(\x03\x32\xc0\x03\n\tAgentGate\x12\x41\n\x0cRequestGrant\x12\x17.agentgate.GrantRequest\x1a\x18.agentgate.GrantResponse\x12H\n\rExchangeGrant\x12\x1a.agentgate.ExchangeRequest\x1a\x1b.agentgate.ExchangeResponse\x12\x45\n\x0cReleaseGrant\x12\x19.agentgate.ReleaseRequest\x1a\x1a.agentgate.ReleaseResponse\x12L\n\x0bRevokeAgent\x12\x1d.agentgate.RevokeAgentRequest\x1a\x1e.agentgate.RevokeAgentResponse\x12M\n\x0e\x45valuatePolicy\x12\x1c.agentgate.PolicyEvalRequest\x1a\x1d.agentgate.PolicyEvalResponse\x12\x42\n\x0bHealthCheck\x12\x18.agentgate.HealthRequest\x1a\x19.agentgate.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0f\x61gentgate.proto\x12\tagentgate\"\xc7\x01\n\x0bGrantClaims\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x11\n\trequester\x18\x02 \x01(\t\x12\x12\n\nsecret_ref\x18\x03 \x01(\t\x12\x13\n\x0b\x65nvironment\x18\x04 \x01(\t\x12\x0c\n\x04task\x18\x05 \x01(\t\x12\x11\n\tissued_at\x18\x06 \x01(\x03\x12\x12\n\nexpires_at\x18\x07 \x01(\x03\x12\x10\n\x08max_uses\x18\x08 \x01(\r\x12\x13\n\x0bpolicy_name\x18\t \x01(\t\x12\x0e\n\x06key_id\x18\n \x01(\t\":\n\x10MintTokenRequest\x12&\n\x06\x63laims\x18\x01 \x01(\x0b\x32\x16.agentgate.GrantClaims\"1\n\x11MintTokenResponse\x12\r\n\x05token\x18\x01 \x01(\t\x12\r\n\x05\x65rror\x18\x02 \x01(\t\"#\n\x12VerifyTokenRequest\x12\r\n\x05token\x18\x01 \x01(\t\"\\\n\x13VerifyTokenResponse\x12\r\n\x05valid\x18\x01 \x01(\x08\x12&\n\x06\x63laims\x18\x02 \x01(\x0b\x32\x16.agentgate.GrantClaims\x12\x0e\n\x06reason\x18\x03 \x01(\t\"\x12\n\x10PublicKeyRequest\"J\n\x11PublicKeyResponse\x12\x11\n\talgorithm\x18\x01 \x01(\t\x12\x0e\n\x06key_id\x18\x02 \x01(\t\x12\x12\n\npublic_key\x18\x03 \x01(\t\"\x83\x01\n\x0cGrantRequest\x12\x12\n\nagent_name\x18\x01 \x01(\t\x12\x13\n\x0b\x65nvironment\x18\x02 \x01(\t\x12\x0c\n\x04task\x18\x03 \x01(\t\x12\x12\n\nsecret_ref\x18\x04 \x01(\t\x12\x15\n\rrequested_ttl\x18\x05 \x01(\x05\x12\x11\n\tsource_ip\x18\x06 \x01(\t\"\x91\x01\n\rGrantResponse\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x12\n\nexpires_at\x18\x02 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x03 \x01(\x05\x12\x16\n\x0euses_remaining\x18\x04 \x01(\x05\x12\x0e\n\x06policy\x18\x05 \x01(\t\x12\r\n\x05\x65rror\x18\x06 \x01(\t\x12\x0e\n\x06reason\x18\x07 \x01(\t\"6\n\x0f\x45xchangeRequest\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x11\n\tsource_ip\x18\x02 \x01(\t\"q\n\x10\x45xchangeResponse\x12\x10\n\x08grant_id\x18\x01 \x01(\t\x12\x14\n\x0csecret_value\x18\x02 \x01(\t\x12\x16\n\x0euses_remaining\x18\x03 \x01(\x05\x12\r\n\x05\x65rror\x18\x04 \x01(\t\x12\x0e\n\x06reason\x18\x05 \x01(\t\"\"\n\x0eReleaseRequest\x12\x10\n\x08grant_id\x18\x01 \x01(\t\"R\n\x0fReleaseResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x10\n\x08grant_id\x18\x02 \x01(\t\x12\r\n\x05\x65rror\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\"(\n\x12RevokeAgentRequest\x12\x12\n\nagent_name\x18\x01 \x01(\t\"K\n\x13RevokeAgentResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\r\n\x05\x61gent\x18\x02 \x01(\t\x12\x15\n\rrevoked_count\x18\x03 \x01(\x05\"]\n\x11PolicyEvalRequest\x12\x11\n\trequester\x18\x01 \x01(\t\x12\x13\n\x0b\x65nvironment\x18\x02 \x01(\t\x12\x0c\n\x04task\x18\x03 \x01(\t\x12\x12\n\nsecret_ref\x18\x04 \x01(\t\"q\n\x12PolicyEvalResponse\x12\x0f\n\x07\x61llowed\x18\x01 \x01(\x08\x12\x13\n\x0bpolicy_name\x18\x02 \x01(\t\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x04 \x01(\x05\x12\x10\n\x08max_uses\x18\x05 \x01(\x05\"\x0f\n\rHealthRequest\"R\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x15\n\ractive_grants\x18\x02 \x01(\x03\x12\x19\n\x11total_evaluations\x18\x03 \x01(\x03\x32\x9e\x05\n\tAgentGate\x12\x41\n\x0cRequestGrant\x12\x17.agentgate.GrantRequest\x1a\x18.agentgate.GrantResponse\x12H\n\rExchangeGrant\x12\x1a.agentgate.ExchangeRequest\x1a\x1b.agentgate.ExchangeResponse\x12\x45\n\x0cReleaseGrant\x12\x19.agentgate.ReleaseRequest\x1a\x1a.agentgate.ReleaseResponse\x12L\n\x0bRevokeAgent\x12\x1d.agentgate.RevokeAgentRequest\x1a\x1e.agentgate.RevokeAgentResponse\x12M\n\x0e\x45valuatePolicy\x12\x1c.agentgate.PolicyEvalRequest\x1a\x1d.agentgate.PolicyEvalResponse\x12\x42\n\x0bHealthCheck\x12\x18.agentgate.HealthRequest\x1a\x19.agentgate.HealthResponse\x12\x46\n\tMintToken\x12\x1b.agentgate.MintTokenRequest\x1a\x1c.agentgate.MintTokenResponse\x12L\n\x0bVerifyToken\x12\x1d.agentgate.VerifyTokenRequest\x1a\x1e.agentgate.VerifyTokenResponse\x12\x46\n\tPublicKey\x12\x1b.agentgate.PublicKeyRequest\x1a\x1c.agentgate.PublicKeyResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'agentgate_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_GRANTREQUEST']._serialized_start=31
-  _globals['_GRANTREQUEST']._serialized_end=162
-  _globals['_GRANTRESPONSE']._serialized_start=165
-  _globals['_GRANTRESPONSE']._serialized_end=310
-  _globals['_EXCHANGEREQUEST']._serialized_start=312
-  _globals['_EXCHANGEREQUEST']._serialized_end=366
-  _globals['_EXCHANGERESPONSE']._serialized_start=368
-  _globals['_EXCHANGERESPONSE']._serialized_end=481
-  _globals['_RELEASEREQUEST']._serialized_start=483
-  _globals['_RELEASEREQUEST']._serialized_end=517
-  _globals['_RELEASERESPONSE']._serialized_start=519
-  _globals['_RELEASERESPONSE']._serialized_end=601
-  _globals['_REVOKEAGENTREQUEST']._serialized_start=603
-  _globals['_REVOKEAGENTREQUEST']._serialized_end=643
-  _globals['_REVOKEAGENTRESPONSE']._serialized_start=645
-  _globals['_REVOKEAGENTRESPONSE']._serialized_end=720
-  _globals['_POLICYEVALREQUEST']._serialized_start=722
-  _globals['_POLICYEVALREQUEST']._serialized_end=815
-  _globals['_POLICYEVALRESPONSE']._serialized_start=817
-  _globals['_POLICYEVALRESPONSE']._serialized_end=930
-  _globals['_HEALTHREQUEST']._serialized_start=932
-  _globals['_HEALTHREQUEST']._serialized_end=947
-  _globals['_HEALTHRESPONSE']._serialized_start=949
-  _globals['_HEALTHRESPONSE']._serialized_end=1031
-  _globals['_AGENTGATE']._serialized_start=1034
-  _globals['_AGENTGATE']._serialized_end=1482
+  _globals['_GRANTCLAIMS']._serialized_start=31
+  _globals['_GRANTCLAIMS']._serialized_end=230
+  _globals['_MINTTOKENREQUEST']._serialized_start=232
+  _globals['_MINTTOKENREQUEST']._serialized_end=290
+  _globals['_MINTTOKENRESPONSE']._serialized_start=292
+  _globals['_MINTTOKENRESPONSE']._serialized_end=341
+  _globals['_VERIFYTOKENREQUEST']._serialized_start=343
+  _globals['_VERIFYTOKENREQUEST']._serialized_end=378
+  _globals['_VERIFYTOKENRESPONSE']._serialized_start=380
+  _globals['_VERIFYTOKENRESPONSE']._serialized_end=472
+  _globals['_PUBLICKEYREQUEST']._serialized_start=474
+  _globals['_PUBLICKEYREQUEST']._serialized_end=492
+  _globals['_PUBLICKEYRESPONSE']._serialized_start=494
+  _globals['_PUBLICKEYRESPONSE']._serialized_end=568
+  _globals['_GRANTREQUEST']._serialized_start=571
+  _globals['_GRANTREQUEST']._serialized_end=702
+  _globals['_GRANTRESPONSE']._serialized_start=705
+  _globals['_GRANTRESPONSE']._serialized_end=850
+  _globals['_EXCHANGEREQUEST']._serialized_start=852
+  _globals['_EXCHANGEREQUEST']._serialized_end=906
+  _globals['_EXCHANGERESPONSE']._serialized_start=908
+  _globals['_EXCHANGERESPONSE']._serialized_end=1021
+  _globals['_RELEASEREQUEST']._serialized_start=1023
+  _globals['_RELEASEREQUEST']._serialized_end=1057
+  _globals['_RELEASERESPONSE']._serialized_start=1059
+  _globals['_RELEASERESPONSE']._serialized_end=1141
+  _globals['_REVOKEAGENTREQUEST']._serialized_start=1143
+  _globals['_REVOKEAGENTREQUEST']._serialized_end=1183
+  _globals['_REVOKEAGENTRESPONSE']._serialized_start=1185
+  _globals['_REVOKEAGENTRESPONSE']._serialized_end=1260
+  _globals['_POLICYEVALREQUEST']._serialized_start=1262
+  _globals['_POLICYEVALREQUEST']._serialized_end=1355
+  _globals['_POLICYEVALRESPONSE']._serialized_start=1357
+  _globals['_POLICYEVALRESPONSE']._serialized_end=1470
+  _globals['_HEALTHREQUEST']._serialized_start=1472
+  _globals['_HEALTHREQUEST']._serialized_end=1487
+  _globals['_HEALTHRESPONSE']._serialized_start=1489
+  _globals['_HEALTHRESPONSE']._serialized_end=1571
+  _globals['_AGENTGATE']._serialized_start=1574
+  _globals['_AGENTGATE']._serialized_end=2244
 # @@protoc_insertion_point(module_scope)

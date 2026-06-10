@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { GrantResponse, SecretResponse } from "@/lib/types";
+import { Button, Field, controlClass } from "@/components/ui";
 
 export default function SecretRequestForm() {
   const [agentName, setAgentName] = useState("demo-agent-01");
@@ -80,98 +80,104 @@ export default function SecretRequestForm() {
     <div className="space-y-4">
       <form onSubmit={handleRequestGrant} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Agent Name</label>
-            <input
-              value={agentName}
-              onChange={(e) => setAgentName(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Environment</label>
-            <select
-              value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
-            >
-              <option value="development">development</option>
-              <option value="staging">staging</option>
-              <option value="production">production</option>
-              <option value="ci">ci</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Task</label>
-            <input
-              value={task}
-              onChange={(e) => setTask(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">TTL (seconds)</label>
-            <input
-              type="number"
-              value={ttl}
-              onChange={(e) => setTtl(Number(e.target.value))}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"
-            />
-          </div>
+          <Field label="Agent Name">
+            {(p) => (
+              <input
+                {...p}
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+                className={controlClass}
+              />
+            )}
+          </Field>
+          <Field label="Environment">
+            {(p) => (
+              <select
+                {...p}
+                value={environment}
+                onChange={(e) => setEnvironment(e.target.value)}
+                className={controlClass}
+              >
+                <option value="development">development</option>
+                <option value="staging">staging</option>
+                <option value="production">production</option>
+                <option value="ci">ci</option>
+              </select>
+            )}
+          </Field>
+          <Field label="Task">
+            {(p) => (
+              <input
+                {...p}
+                value={task}
+                onChange={(e) => setTask(e.target.value)}
+                className={controlClass}
+              />
+            )}
+          </Field>
+          <Field label="TTL (seconds)">
+            {(p) => (
+              <input
+                {...p}
+                type="number"
+                value={ttl}
+                onChange={(e) => setTtl(Number(e.target.value))}
+                className={controlClass}
+              />
+            )}
+          </Field>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Secret Reference</label>
-          <input
-            value={secretRef}
-            onChange={(e) => setSecretRef(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-200 font-mono focus:border-blue-500 outline-none"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white px-4 py-2 rounded text-sm transition-colors"
-        >
+        <Field label="Secret Reference">
+          {(p) => (
+            <input
+              {...p}
+              value={secretRef}
+              onChange={(e) => setSecretRef(e.target.value)}
+              className={`${controlClass} font-mono`}
+            />
+          )}
+        </Field>
+        <Button type="submit" loading={loading}>
           {loading ? "Requesting..." : "Phase 1: Request Grant"}
-        </button>
+        </Button>
       </form>
 
-      {grantResult && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">
-            Phase 1 Response (grant token -- no secret):
-          </p>
-          <pre className="bg-gray-800 border border-gray-700 rounded p-3 text-xs text-gray-300 overflow-x-auto">
-            {grantResult}
-          </pre>
-        </div>
-      )}
+      <div aria-live="polite">
+        {grantResult && (
+          <div>
+            <p className="text-xs text-gray-500 mb-1">
+              Phase 1 Response (grant token -- no secret):
+            </p>
+            <pre className="bg-gray-800 border border-gray-700 rounded p-3 text-xs text-gray-300 overflow-x-auto">
+              {grantResult}
+            </pre>
+          </div>
+        )}
+      </div>
 
       {phase === 2 && grantId && (
         <div className="border-t border-gray-700 pt-3">
-          <button
-            onClick={handleExchange}
-            disabled={loading}
-            className="bg-amber-600 hover:bg-amber-700 disabled:bg-gray-700 text-white px-4 py-2 rounded text-sm transition-colors"
-          >
+          <Button variant="warning" onClick={handleExchange} loading={loading}>
             {loading ? "Exchanging..." : `Phase 2: Exchange for Secret`}
-          </button>
-          <p className="text-xs text-gray-500 mt-1">
+          </Button>
+          <p className="text-xs text-gray-500 mt-1 font-mono break-all">
             Grant ID: {grantId}
           </p>
         </div>
       )}
 
-      {exchangeResult && (
-        <div>
-          <p className="text-xs text-gray-500 mb-1">
-            Phase 2 Response (actual secret):
-          </p>
-          <pre className="bg-gray-800 border border-amber-700/50 rounded p-3 text-xs text-amber-300 overflow-x-auto">
-            {exchangeResult}
-          </pre>
-        </div>
-      )}
+      <div aria-live="polite">
+        {exchangeResult && (
+          <div>
+            <p className="text-xs text-gray-500 mb-1">
+              Phase 2 Response (actual secret):
+            </p>
+            <pre className="bg-gray-800 border border-amber-700/50 rounded p-3 text-xs text-amber-300 overflow-x-auto">
+              {exchangeResult}
+            </pre>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

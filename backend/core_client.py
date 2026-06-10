@@ -58,6 +58,85 @@ class CoreClient:
         )
         return grant, policy
 
+    def mint_token(
+        self,
+        *,
+        grant_id: str,
+        requester: str,
+        secret_ref: str,
+        environment: str,
+        task: str,
+        issued_at: int,
+        expires_at: int,
+        max_uses: int,
+        policy_name: str,
+    ) -> str:
+        """Ask the core to mint a signed (HMAC-SHA256) capability token.
+
+        The returned ``ag1.<payload>.<sig>`` token embeds the grant's claims and
+        becomes the credential the agent presents on exchange. Raises on failure
+        so the caller can fall back to an unsigned id.
+        """
+        claims = agentgate_pb2.GrantClaims(
+            grant_id=grant_id,
+            requester=requester,
+            secret_ref=secret_ref,
+            environment=environment,
+            task=task,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            max_uses=max_uses,
+            policy_name=policy_name,
+        )
+        response = self._stub.MintToken(
+            agentgate_pb2.MintTokenRequest(claims=claims), timeout=self.timeout
+        )
+        if response.error:
+            raise RuntimeError(f"token mint failed: {response.error}")
+        return response.token
+
+    def verify_token(self, token: str) -> tuple[dict | None, str]:
+        """Verify a capability token's signature and expiry via the core.
+
+        Returns ``(claims, "")`` if valid, or ``(None, reason)`` if the token is
+        tampered, forged, or expired. Use-count and revocation are enforced
+        separately by the persistent grant store.
+        """
+        response = self._stub.VerifyToken(
+            agentgate_pb2.VerifyTokenRequest(token=token), timeout=self.timeout
+        )
+        if not response.valid:
+            return None, response.reason or "token verification failed"
+
+        c = response.claims
+        return {
+            "grant_id": c.grant_id,
+            "requester": c.requester,
+            "secret_ref": c.secret_ref,
+            "environment": c.environment,
+            "task": c.task,
+            "issued_at": c.issued_at,
+            "expires_at": c.expires_at,
+            "max_uses": c.max_uses,
+            "policy_name": c.policy_name,
+            "key_id": c.key_id,
+        }, ""
+
+    def public_key(self) -> dict:
+        """Fetch the core's signing public key and id.
+
+        Returns ``{"algorithm", "key_id", "public_key"}``. Verifiers can use the
+        public key to validate tokens without ever holding the signing key.
+        """
+        response = self._stub.PublicKey(
+            agentgate_pb2.PublicKeyRequest(), timeout=self.timeout
+        )
+        return {
+            "algorithm": response.algorithm,
+            "key_id": response.key_id,
+            "public_key": response.public_key,
+        }
+
     def health(self) -> bool:
         try:
             self._stub.HealthCheck(

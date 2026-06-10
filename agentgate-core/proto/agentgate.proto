@@ -9,6 +9,60 @@ service AgentGate {
   rpc RevokeAgent(RevokeAgentRequest) returns (RevokeAgentResponse);
   rpc EvaluatePolicy(PolicyEvalRequest) returns (PolicyEvalResponse);
   rpc HealthCheck(HealthRequest) returns (HealthResponse);
+
+  // Stateless cryptographic operations on grant capability tokens.
+  // These wrap the Ed25519 token engine without touching the grant store,
+  // so the Python enforcement point can own grant state (uses, revocation)
+  // while the Rust decision point owns the cryptographic proof.
+  rpc MintToken(MintTokenRequest) returns (MintTokenResponse);
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+
+  // Publish the Ed25519 public key so verifiers can validate tokens without
+  // ever holding the signing key. This is the PKI seam: the signer (core) and
+  // verifiers are cryptographically decoupled.
+  rpc PublicKey(PublicKeyRequest) returns (PublicKeyResponse);
+}
+
+// The signed claims embedded in a grant capability token (ag1.<payload>.<sig>).
+message GrantClaims {
+  string grant_id = 1;
+  string requester = 2;
+  string secret_ref = 3;
+  string environment = 4;
+  string task = 5;
+  int64 issued_at = 6;
+  int64 expires_at = 7;
+  uint32 max_uses = 8;
+  string policy_name = 9;
+  // Identifier of the key that signed the token (set by the core at mint time).
+  string key_id = 10;
+}
+
+message MintTokenRequest {
+  GrantClaims claims = 1;
+}
+
+message MintTokenResponse {
+  string token = 1;
+  string error = 2;
+}
+
+message VerifyTokenRequest {
+  string token = 1;
+}
+
+message VerifyTokenResponse {
+  bool valid = 1;
+  GrantClaims claims = 2;
+  string reason = 3;
+}
+
+message PublicKeyRequest {}
+
+message PublicKeyResponse {
+  string algorithm = 1;   // "Ed25519"
+  string key_id = 2;
+  string public_key = 3;  // hex-encoded
 }
 
 message GrantRequest {

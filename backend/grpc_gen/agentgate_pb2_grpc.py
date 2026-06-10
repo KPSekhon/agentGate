@@ -64,6 +64,21 @@ class AgentGateStub(object):
                 request_serializer=agentgate__pb2.HealthRequest.SerializeToString,
                 response_deserializer=agentgate__pb2.HealthResponse.FromString,
                 _registered_method=True)
+        self.MintToken = channel.unary_unary(
+                '/agentgate.AgentGate/MintToken',
+                request_serializer=agentgate__pb2.MintTokenRequest.SerializeToString,
+                response_deserializer=agentgate__pb2.MintTokenResponse.FromString,
+                _registered_method=True)
+        self.VerifyToken = channel.unary_unary(
+                '/agentgate.AgentGate/VerifyToken',
+                request_serializer=agentgate__pb2.VerifyTokenRequest.SerializeToString,
+                response_deserializer=agentgate__pb2.VerifyTokenResponse.FromString,
+                _registered_method=True)
+        self.PublicKey = channel.unary_unary(
+                '/agentgate.AgentGate/PublicKey',
+                request_serializer=agentgate__pb2.PublicKeyRequest.SerializeToString,
+                response_deserializer=agentgate__pb2.PublicKeyResponse.FromString,
+                _registered_method=True)
 
 
 class AgentGateServicer(object):
@@ -105,6 +120,31 @@ class AgentGateServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def MintToken(self, request, context):
+        """Stateless cryptographic operations on grant capability tokens.
+        These wrap the HMAC-SHA256 token engine without touching the grant store,
+        so the Python enforcement point can own grant state (uses, revocation)
+        while the Rust decision point owns the cryptographic proof.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def VerifyToken(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PublicKey(self, request, context):
+        """Publish the Ed25519 public key so verifiers can validate tokens without
+        ever holding the signing key. This is the PKI seam: the signer (core) and
+        verifiers are cryptographically decoupled.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AgentGateServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -137,6 +177,21 @@ def add_AgentGateServicer_to_server(servicer, server):
                     servicer.HealthCheck,
                     request_deserializer=agentgate__pb2.HealthRequest.FromString,
                     response_serializer=agentgate__pb2.HealthResponse.SerializeToString,
+            ),
+            'MintToken': grpc.unary_unary_rpc_method_handler(
+                    servicer.MintToken,
+                    request_deserializer=agentgate__pb2.MintTokenRequest.FromString,
+                    response_serializer=agentgate__pb2.MintTokenResponse.SerializeToString,
+            ),
+            'VerifyToken': grpc.unary_unary_rpc_method_handler(
+                    servicer.VerifyToken,
+                    request_deserializer=agentgate__pb2.VerifyTokenRequest.FromString,
+                    response_serializer=agentgate__pb2.VerifyTokenResponse.SerializeToString,
+            ),
+            'PublicKey': grpc.unary_unary_rpc_method_handler(
+                    servicer.PublicKey,
+                    request_deserializer=agentgate__pb2.PublicKeyRequest.FromString,
+                    response_serializer=agentgate__pb2.PublicKeyResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -301,6 +356,87 @@ class AgentGate(object):
             '/agentgate.AgentGate/HealthCheck',
             agentgate__pb2.HealthRequest.SerializeToString,
             agentgate__pb2.HealthResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MintToken(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/agentgate.AgentGate/MintToken',
+            agentgate__pb2.MintTokenRequest.SerializeToString,
+            agentgate__pb2.MintTokenResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def VerifyToken(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/agentgate.AgentGate/VerifyToken',
+            agentgate__pb2.VerifyTokenRequest.SerializeToString,
+            agentgate__pb2.VerifyTokenResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PublicKey(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/agentgate.AgentGate/PublicKey',
+            agentgate__pb2.PublicKeyRequest.SerializeToString,
+            agentgate__pb2.PublicKeyResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::{Duration, Utc};
 use tonic::{Request, Response, Status};
 
-use crate::crypto::{generate_grant_id, GrantPayload, TokenEngine};
+use crate::crypto::{GrantPayload, TokenEngine, generate_grant_id};
 use crate::grants::{ActiveGrant, AuditEntry, GrantStore};
 use crate::policy::PolicyEngine;
 use crate::proto;
@@ -56,12 +56,9 @@ impl proto::agent_gate_server::AgentGate for AgentGateService {
             }));
         }
 
-        let result = self.policy_engine.evaluate(
-            &requester,
-            &req.environment,
-            &req.task,
-            &req.secret_ref,
-        );
+        let result =
+            self.policy_engine
+                .evaluate(&requester, &req.environment, &req.task, &req.secret_ref);
 
         let anomaly = self
             .grant_store
@@ -104,8 +101,7 @@ impl proto::agent_gate_server::AgentGate for AgentGateService {
                 let ttl = req.requested_ttl.min(grant.ttl_seconds);
                 let now = Utc::now();
                 let expires_at = now + Duration::seconds(ttl as i64);
-                let grant_id = generate_grant_id()
-                    .map_err(|e| Status::internal(e.to_string()))?;
+                let grant_id = generate_grant_id().map_err(|e| Status::internal(e.to_string()))?;
 
                 let payload = GrantPayload {
                     grant_id: grant_id.clone(),
@@ -117,6 +113,7 @@ impl proto::agent_gate_server::AgentGate for AgentGateService {
                     expires_at: expires_at.timestamp(),
                     max_uses: grant.max_uses,
                     policy_name: policy_name.clone(),
+                    key_id: String::new(), // stamped by the engine at mint time
                 };
 
                 let token = self
@@ -265,7 +262,12 @@ impl proto::agent_gate_server::AgentGate for AgentGateService {
         });
 
         Ok(Response::new(proto::RevokeAgentResponse {
-            status: if count > 0 { "revoked" } else { "no_active_grants" }.into(),
+            status: if count > 0 {
+                "revoked"
+            } else {
+                "no_active_grants"
+            }
+            .into(),
             agent: req.agent_name,
             revoked_count: count as i32,
         }))
@@ -312,6 +314,102 @@ impl proto::agent_gate_server::AgentGate for AgentGateService {
             status: "healthy".into(),
             active_grants: self.grant_store.active_grant_count() as i64,
             total_evaluations: self.grant_store.audit_entries().len() as i64,
+        }))
+    }
+
+    /// Mint a signed capability token from a set of claims. Stateless — this is
+    /// a pure HMAC-SHA256 signing operation and does not touch the grant store.
+    /// The enforcement point (Python) persists grant state separately.
+    async fn mint_token(
+        &self,
+        request: Request<proto::MintTokenRequest>,
+    ) -> Result<Response<proto::MintTokenResponse>, Status> {
+        let claims = request
+            .into_inner()
+            .claims
+            .ok_or_else(|| Status::invalid_argument("claims are required"))?;
+
+        let payload = GrantPayload {
+            grant_id: claims.grant_id,
+            requester: claims.requester,
+            secret_ref: claims.secret_ref,
+            environment: claims.environment,
+            task: claims.task,
+            issued_at: claims.issued_at,
+            expires_at: claims.expires_at,
+            max_uses: claims.max_uses,
+            policy_name: claims.policy_name,
+            key_id: String::new(), // stamped by the engine at mint time
+        };
+
+        match self.token_engine.mint(&payload) {
+            Ok(token) => Ok(Response::new(proto::MintTokenResponse {
+                token,
+                error: String::new(),
+            })),
+            Err(e) => Ok(Response::new(proto::MintTokenResponse {
+                token: String::new(),
+                error: e.to_string(),
+            })),
+        }
+    }
+
+    /// Verify a capability token's signature and expiry. Stateless — proves the
+    /// token was minted by this core and has not been tampered with or expired.
+    /// Use-count and revocation are enforced by the persistent grant store at
+    /// the enforcement point, not here.
+    async fn verify_token(
+        &self,
+        request: Request<proto::VerifyTokenRequest>,
+    ) -> Result<Response<proto::VerifyTokenResponse>, Status> {
+        let token = request.into_inner().token;
+
+        match self.token_engine.verify(&token) {
+            Ok(payload) => {
+                let now = Utc::now().timestamp();
+                if payload.expires_at < now {
+                    return Ok(Response::new(proto::VerifyTokenResponse {
+                        valid: false,
+                        claims: None,
+                        reason: "token expired".into(),
+                    }));
+                }
+
+                Ok(Response::new(proto::VerifyTokenResponse {
+                    valid: true,
+                    claims: Some(proto::GrantClaims {
+                        grant_id: payload.grant_id,
+                        requester: payload.requester,
+                        secret_ref: payload.secret_ref,
+                        environment: payload.environment,
+                        task: payload.task,
+                        issued_at: payload.issued_at,
+                        expires_at: payload.expires_at,
+                        max_uses: payload.max_uses,
+                        policy_name: payload.policy_name,
+                        key_id: payload.key_id,
+                    }),
+                    reason: String::new(),
+                }))
+            }
+            Err(e) => Ok(Response::new(proto::VerifyTokenResponse {
+                valid: false,
+                claims: None,
+                reason: e.to_string(),
+            })),
+        }
+    }
+
+    /// Publish the Ed25519 public key and its id. Verifiers use this to validate
+    /// tokens without ever holding the signing key.
+    async fn public_key(
+        &self,
+        _request: Request<proto::PublicKeyRequest>,
+    ) -> Result<Response<proto::PublicKeyResponse>, Status> {
+        Ok(Response::new(proto::PublicKeyResponse {
+            algorithm: "Ed25519".into(),
+            key_id: self.token_engine.key_id().to_string(),
+            public_key: self.token_engine.public_key_hex(),
         }))
     }
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
@@ -10,6 +11,8 @@ from backend.database import async_session
 from backend.models import SecretGrant
 from backend.policy.engine import PolicyEngine
 from backend.secrets.provider import SecretProvider
+
+logger = logging.getLogger("agentgate.session")
 
 
 class AgentSessionManager:
@@ -104,9 +107,33 @@ class AgentSessionManager:
             self._expire_grant(grant_record.id, ttl, requester, environment, task, secret_ref)
         )
 
+        # If a Rust core is attached, mint a signed (HMAC-SHA256) capability
+        # token embedding the grant's claims. The agent receives this token as
+        # its grant_id; a tampered, forged, or expired token is rejected at the
+        # core on exchange. Without a core (demo mode) we return the opaque DB id.
+        issued_grant_id = grant_record.id
+        core = self.engine.core_client
+        if core is not None:
+            try:
+                issued_grant_id = core.mint_token(
+                    grant_id=grant_record.id,
+                    requester=requester,
+                    secret_ref=secret_ref,
+                    environment=environment,
+                    task=task,
+                    issued_at=int(now.timestamp()),
+                    expires_at=int(expires_at.timestamp()),
+                    max_uses=grant.max_uses,
+                    policy_name=policy.name,
+                )
+            except Exception as exc:  # grpc.RpcError or channel failure
+                logger.warning(
+                    "token mint failed (%s); issuing unsigned grant id", exc
+                )
+
         # Phase 1 response: grant token + metadata, NO secret value
         return {
-            "grant_id": grant_record.id,
+            "grant_id": issued_grant_id,
             "expires_at": expires_at,
             "ttl_seconds": ttl,
             "uses_remaining": grant.max_uses,
@@ -118,9 +145,20 @@ class AgentSessionManager:
 
         Decrements uses_remaining. When uses hit 0, the grant is auto-revoked.
         """
+        # A signed capability token (ag1.…) is verified cryptographically by the
+        # core before we touch the database — this rejects tampered, forged, or
+        # expired tokens at the Rust layer. Plain ids (demo mode) pass through.
+        lookup_id = grant_id
+        core = self.engine.core_client
+        if core is not None and grant_id.startswith(("ag1.", "ag2.")):
+            claims, reason = core.verify_token(grant_id)
+            if claims is None:
+                return {"error": "invalid_token", "reason": reason}
+            lookup_id = claims["grant_id"]
+
         async with async_session() as session:
             result = await session.execute(
-                select(SecretGrant).where(SecretGrant.id == grant_id)
+                select(SecretGrant).where(SecretGrant.id == lookup_id)
             )
             record = result.scalar_one_or_none()
 

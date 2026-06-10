@@ -36,16 +36,19 @@ export default function AuditTable({ logs }: AuditTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
+        <caption className="sr-only">
+          Audit log of credential broker actions, most recent first
+        </caption>
         <thead>
           <tr className="border-b border-gray-800 text-gray-500 text-left">
-            <th className="pb-2 pr-4">Time</th>
-            <th className="pb-2 pr-4">Action</th>
-            <th className="pb-2 pr-4">Requester</th>
-            <th className="pb-2 pr-4">Secret</th>
-            <th className="pb-2 pr-4">Environment</th>
-            <th className="pb-2 pr-4">Policy</th>
-            <th className="pb-2 pr-4">TTL</th>
-            <th className="pb-2">Anomaly</th>
+            <th scope="col" className="pb-2 pr-4">Time</th>
+            <th scope="col" className="pb-2 pr-4">Action</th>
+            <th scope="col" className="pb-2 pr-4">Requester</th>
+            <th scope="col" className="pb-2 pr-4">Secret</th>
+            <th scope="col" className="pb-2 pr-4">Environment</th>
+            <th scope="col" className="pb-2 pr-4">Policy</th>
+            <th scope="col" className="pb-2 pr-4">TTL</th>
+            <th scope="col" className="pb-2">Anomaly</th>
           </tr>
         </thead>
         <tbody>

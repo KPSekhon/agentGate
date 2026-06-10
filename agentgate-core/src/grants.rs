@@ -71,11 +71,9 @@ impl GrantStore {
         let window_start = now - chrono::Duration::seconds(60);
 
         let mut windows = self.rate_windows.lock().unwrap();
-        let window = windows
-            .entry(requester.to_string())
-            .or_insert(RateWindow {
-                timestamps: Vec::new(),
-            });
+        let window = windows.entry(requester.to_string()).or_insert(RateWindow {
+            timestamps: Vec::new(),
+        });
 
         window.timestamps.retain(|t| *t > window_start);
 
@@ -193,7 +191,7 @@ impl GrantStore {
         }
 
         let hour = now.hour();
-        if environment == "production" && (hour < 6 || hour > 22) {
+        if environment == "production" && !(6..=22).contains(&hour) {
             score += 0.3;
         }
 

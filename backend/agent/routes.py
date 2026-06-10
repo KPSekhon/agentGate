@@ -64,7 +64,13 @@ async def exchange_secret(
     result = await _manager.exchange_grant(body.grant_id, source_ip=source_ip)
 
     if "error" in result:
-        codes = {"not_found": 404, "revoked": 410, "expired": 410, "exhausted": 410}
+        codes = {
+            "not_found": 404,
+            "revoked": 410,
+            "expired": 410,
+            "exhausted": 410,
+            "invalid_token": 401,
+        }
         raise HTTPException(
             status_code=codes.get(result["error"], 400),
             detail=result,

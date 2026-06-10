@@ -53,3 +53,74 @@ def test_core_denies_unknown_agent(core):
 
 def test_core_health(core):
     assert core.health() is True
+
+
+def _claims(expires_at: int):
+    import time
+
+    return dict(
+        grant_id="grant-test-001",
+        requester="agent:deploy-bot",
+        secret_ref="op://vault/api-key/credential",
+        environment="staging",
+        task="deploy",
+        issued_at=int(time.time()),
+        expires_at=expires_at,
+        max_uses=1,
+        policy_name="deploy-access",
+    )
+
+
+def test_core_mints_and_verifies_token(core):
+    import time
+
+    token = core.mint_token(**_claims(int(time.time()) + 300))
+    assert token.startswith("ag2.")  # Ed25519 public-key scheme
+
+    claims, reason = core.verify_token(token)
+    assert reason == ""
+    assert claims is not None
+    assert claims["grant_id"] == "grant-test-001"
+    assert claims["requester"] == "agent:deploy-bot"
+    assert claims["max_uses"] == 1
+    # The core stamps its signing key id into every token.
+    assert claims["key_id"]
+
+
+def test_core_publishes_public_key(core):
+    pk = core.public_key()
+    assert pk["algorithm"] == "Ed25519"
+    assert pk["key_id"]
+    # Ed25519 public keys are 32 bytes => 64 hex chars.
+    assert len(pk["public_key"]) == 64
+
+    # The key id embedded in a freshly minted token matches the published key.
+    import time
+
+    token = core.mint_token(**_claims(int(time.time()) + 300))
+    claims, _ = core.verify_token(token)
+    assert claims["key_id"] == pk["key_id"]
+
+
+def test_core_rejects_tampered_token(core):
+    import time
+
+    token = core.mint_token(**_claims(int(time.time()) + 300))
+    prefix, payload_hex, sig_hex = token.split(".", 2)
+    sig = bytearray(bytes.fromhex(sig_hex))
+    sig[0] ^= 0xFF  # flip bits in the signature
+    tampered = f"{prefix}.{payload_hex}.{sig.hex()}"
+
+    claims, reason = core.verify_token(tampered)
+    assert claims is None
+    assert reason  # non-empty rejection reason
+
+
+def test_core_rejects_expired_token(core):
+    import time
+
+    # expires one hour in the past
+    token = core.mint_token(**_claims(int(time.time()) - 3600))
+    claims, reason = core.verify_token(token)
+    assert claims is None
+    assert "expired" in reason.lower()

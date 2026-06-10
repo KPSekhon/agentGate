@@ -22,14 +22,15 @@ export default function Sidebar() {
         </h1>
         <p className="text-xs text-gray-500 mt-0.5">Credential Broker</p>
       </div>
-      <nav className="flex flex-col gap-1">
+      <nav className="flex flex-col gap-1" aria-label="Primary">
         {NAV.map(({ href, label }) => {
           const active = pathname === href;
           return (
             <Link
               key={href}
               href={href}
-              className={`px-3 py-2 rounded text-sm transition-colors ${
+              aria-current={active ? "page" : undefined}
+              className={`px-3 py-2 rounded text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
                 active
                   ? "bg-blue-600/20 text-blue-300 font-medium"
                   : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"

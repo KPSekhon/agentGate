@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs for the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    name: rust core (crypto · policy · grants)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentgate-core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agentgate-core
+
+      - name: fmt
+        run: cargo fmt --check
+
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test
+
+  go-proxy:
+    name: go proxy (rate limit · auth · middleware)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentgate-proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentgate-proxy/go.mod
+          cache: false  # stdlib-only module, no go.sum to key a cache on
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race ./...
+
+  python-backend:
+    name: python backend (policy · api · anomaly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: install
+        run: pip install -e ".[dev]"
+
+      - name: test
+        # The live gRPC integration tests skip automatically when the Rust core
+        # is not running, so the suite is self-contained in CI.
+        run: pytest tests/ -v
