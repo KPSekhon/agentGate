@@ -51,20 +51,27 @@ def spawn(monkeypatch):
 
 
 async def test_resolve_returns_secret(spawn):
-    captured = spawn(FakeProc(stdout=b"hunter2\n"))
+    captured = spawn(FakeProc(stdout=b"hunter2"))
     provider = OpCliProvider()
 
     value = await provider.resolve("op://vault/item/credential")
 
     assert value == "hunter2"
-    # The reference must be one argv entry, never interpolated into a shell.
-    assert captured["argv"] == ("op", "read", "op://vault/item/credential")
+    # --no-newline is required: without it op appends a trailing newline that
+    # would have to be trimmed heuristically. The reference is also one argv
+    # entry, never interpolated into a shell.
+    assert captured["argv"] == (
+        "op",
+        "read",
+        "--no-newline",
+        "op://vault/item/credential",
+    )
 
 
-async def test_only_one_trailing_newline_is_stripped(spawn):
-    spawn(FakeProc(stdout=b"line1\nline2\n\n"))
+async def test_output_is_returned_verbatim(spawn):
+    spawn(FakeProc(stdout=b"line1\nline2\n"))
     value = await OpCliProvider().resolve("op://vault/item/credential")
-    # op adds exactly one newline; a secret ending in a newline keeps it.
+    # --no-newline means stdout is exactly the secret, so nothing is trimmed.
     assert value == "line1\nline2\n"
 
 
@@ -124,7 +131,8 @@ async def test_timeout_kills_the_process(spawn):
 async def test_ssh_key_uses_openssh_format(spawn):
     captured = spawn(FakeProc(stdout=b"-----BEGIN OPENSSH PRIVATE KEY-----\n"))
     await OpCliProvider().resolve_ssh_key("deploy-key")
-    assert captured["argv"][2] == "op://SSH Keys/deploy-key/private key?ssh-format=openssh"
+    # Query-parameter form taken from `op read --help` on CLI 2.34.1.
+    assert captured["argv"][3] == "op://SSH Keys/deploy-key/private key?ssh-format=openssh"
 
 
 def test_factory_selects_cli_provider(monkeypatch):

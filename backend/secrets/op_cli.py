@@ -22,6 +22,9 @@ class OpCliProvider:
 
     Servers and CI should still use the SDK: service accounts are auditable and
     non-interactive, whereas the CLI depends on a human session.
+
+    Requires 1Password CLI 2.x (verified against 2.34.1) for the
+    ``read --no-newline`` flag.
     """
 
     def __init__(self, op_path: str = "op", timeout: float = 30.0) -> None:
@@ -53,6 +56,10 @@ class OpCliProvider:
         proc = await asyncio.create_subprocess_exec(
             self._op,
             "read",
+            # Without this op appends a trailing newline, which would otherwise
+            # have to be stripped heuristically. Asking op not to add one is
+            # exact: a secret that genuinely ends in a newline keeps it.
+            "--no-newline",
             ref,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -75,7 +82,7 @@ class OpCliProvider:
             detail = stderr.decode(errors="replace").strip() or "no error output"
             raise OpCliError(f"`op read` failed ({proc.returncode}): {detail}")
 
-        value = stdout.decode()
-        # op terminates output with a single newline; strip exactly one so a
-        # secret that legitimately ends in a newline is not corrupted further.
-        return value[:-1] if value.endswith("\n") else value
+        # Returned verbatim: --no-newline means stdout is exactly the secret,
+        # so there is nothing to trim and a secret that genuinely ends in a
+        # newline survives intact.
+        return stdout.decode()
