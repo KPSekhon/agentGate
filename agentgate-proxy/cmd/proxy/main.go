@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/KPSekhon/agentgate/agentgate-proxy/internal/config"
 	"github.com/KPSekhon/agentgate/agentgate-proxy/internal/handler"
 	"github.com/KPSekhon/agentgate/agentgate-proxy/internal/health"
 	"github.com/KPSekhon/agentgate/agentgate-proxy/internal/middleware"
 	agTLS "github.com/KPSekhon/agentgate/agentgate-proxy/internal/tls"
+	"github.com/KPSekhon/agentgate/agentgate-proxy/internal/tokens"
 )
 
 func main() {
@@ -35,6 +37,39 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitPerMin, cfg.RateLimitBurst)
 	auth := middleware.NewAuth(cfg.AgentToken)
 
+	// The proxy verifies grant tokens using only the core's public key, which it
+	// either has pinned by configuration or fetches from the backend. It never
+	// holds the signing key, so compromising the edge does not let an attacker
+	// mint grants.
+	verifier := tokens.NewVerifier(cfg.BackendURL)
+	if cfg.PublicKeyHex != "" {
+		if err := verifier.SetKey(cfg.PublicKeyHex, "pinned"); err != nil {
+			slog.Error("invalid AGENTGATE_PUBLIC_KEY", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("token verification key pinned from configuration")
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := verifier.Refresh(ctx); err != nil {
+			slog.Warn("could not load token verification key, edge verification is idle until it appears", "err", err)
+		} else {
+			slog.Info("token verification key loaded", "key_id", verifier.KeyID())
+		}
+		cancel()
+
+		// Re-fetch periodically so a key rotation is picked up without a restart.
+		go func() {
+			for range time.Tick(5 * time.Minute) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := verifier.Refresh(ctx); err != nil {
+					slog.Warn("public key refresh failed", "err", err)
+				}
+				cancel()
+			}
+		}()
+	}
+	grantVerifier := middleware.NewGrantVerifier(verifier)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", checker.LiveHandler)
 	mux.HandleFunc("/readyz", checker.ReadyHandler)
@@ -42,6 +77,7 @@ func main() {
 	mux.Handle("/", proxy)
 
 	var chain http.Handler = mux
+	chain = grantVerifier.Middleware(chain)
 	chain = auth.Middleware(chain)
 	chain = rateLimiter.Middleware(chain)
 	chain = middleware.Logging(chain)

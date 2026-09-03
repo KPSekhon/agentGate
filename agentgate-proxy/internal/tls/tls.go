@@ -8,9 +8,9 @@ import (
 )
 
 type Config struct {
-	CertFile   string
-	KeyFile    string
-	ClientCA   string
+	CertFile string
+	KeyFile  string
+	ClientCA string
 }
 
 func (c *Config) Enabled() bool {

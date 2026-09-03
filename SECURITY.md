@@ -29,7 +29,7 @@ a request crosses three boundaries. each component trusts less than the one behi
 ```
 
 - **agent → proxy** (`untrusted → authenticated`): the agent is assumed hostile. it authenticates with a bearer token, and optionally a client certificate (mTLS) whose CN the proxy forwards as `X-Client-CN`. everything past this point treats the agent's input as adversarial.
-- **proxy → backend** (`authenticated → enforcement`): the Go proxy is the network edge — TLS termination, token-bucket rate limiting, structured logging. it does not make authorization decisions; it forwards authenticated traffic to the Python backend.
+- **proxy → backend** (`authenticated → enforcement`): the Go proxy is the network edge — TLS termination, token-bucket rate limiting, structured logging. it also verifies grant tokens using only the published public key, so a forged or expired token is dropped here and never reaches the backend. it still makes no authorization *decisions*: it can prove a token is authentic, but policy, use-count, and revocation all remain behind it.
 - **backend → core** (`enforcement → decision`): the Python backend is the **policy enforcement point (PEP)**. it owns the REST surface, grant state (SQLite), and secret resolution. it delegates the allow/deny decision and all cryptographic token operations to the Rust **policy decision point (PDP)** over gRPC. the core holds the private signing key and the policy set, and is never directly reachable from the agent.
 
 the private key lives only in the core. a compromise of the proxy or backend does not yield the ability to forge grants — only the ability to *request* them, which still passes through policy evaluation.
@@ -63,7 +63,7 @@ the signature is an **Ed25519** signature (via `ring`) over the exact payload by
 
 the `ag2` version prefix replaces an earlier `ag1` HMAC-SHA256 scheme. the move to public-key signatures matters for trust: with HMAC, every verifier needs the *same secret* that mints tokens — so any verifier can forge. with Ed25519, the core holds the private key and verifiers hold only the **public key**, which can check a signature but never produce one. verifiers are cryptographically decoupled from the signer.
 
-**public-key distribution (the PKI seam).** the core publishes its public key and a `key_id` over the `PublicKey` gRPC method. the `key_id` (first 8 bytes of `SHA-256(public_key)`) is stamped into every token, so a verifier holding several published keys can select the right one — the hook for **key rotation**: stand up a new key, publish it, let old tokens drain against the old key id, retire it. a fixed `AGENTGATE_ED25519_SEED` keeps the key (and thus previously issued tokens) stable across restarts.
+**public-key distribution (the PKI seam).** the core publishes its public key and a `key_id` over the `PublicKey` gRPC method. the `key_id` (first 8 bytes of `SHA-256(public_key)`) is stamped into every token, so a verifier holding several published keys can select the right one — the hook for **key rotation**: stand up a new key, publish it, let old tokens drain against the old key id, retire it. a signing key stored as **PKCS#8** (`agentgate keygen`, passed via `AGENTGATE_SIGNING_KEY`) keeps the key, and thus previously issued tokens, stable across restarts. both PKCS#8 v2 (RFC 5958, what `ring` writes) and v1 (RFC 5208, what `openssl genpkey` writes) are accepted, so keys are interoperable with standard tooling.
 
 **properties this gives us:**
 
@@ -73,7 +73,7 @@ the `ag2` version prefix replaces an earlier `ag1` HMAC-SHA256 scheme. the move 
 - **self-describing** — the token carries its own scope. a leaked token is only ever good for one `secret_ref`, in one environment, for one task.
 - **constant-time verification** — Ed25519 verification is constant-time by construction, so it leaks no timing signal.
 
-these properties are not just asserted — the crypto is covered by **property-based tests** (`proptest`) that assert claims round-trip for arbitrary inputs and that flipping *any single bit* of the payload or signature is always rejected.
+these properties are not just asserted — the crypto is covered by **property-based tests** (`proptest`) that assert claims round-trip for arbitrary inputs and that flipping *any single bit* of the payload or signature is always rejected. a further set of fuzz-style properties throws arbitrary bytes at the token parser and the key loader, asserting they never panic: parsing attacker-controlled input is where parser bugs become vulnerabilities.
 
 verification (signature + expiry) is cryptographic and stateless. **use-count and revocation are enforced separately** by the backend's persistent store, because they are mutable facts a signature cannot capture. a valid signature proves the token is authentic; the backend still checks that the grant has uses left and has not been revoked.
 
@@ -85,13 +85,14 @@ verification (signature + expiry) is cryptographic and stateless. **use-count an
 - **time-scoped** — every grant has a TTL, enforced both as a signed claim (core) and as a background expiry sweep (backend). the effective TTL is `min(requested, policy)`.
 - **bulk revocation** — a single call (`/agent/revoke-agent`) revokes every active grant an agent holds, for incident response.
 - **secrets never persist** — the audit log stores the `op://` reference and the decision, never the secret value. resolved secrets exist only in memory for the duration of the exchange.
+- **defense in depth at the edge** — the proxy independently verifies signature and expiry before forwarding, so a forged token never touches the application or its database. the backend verifies again regardless, so the edge is an extra filter rather than a single point of trust.
 - **graceful degradation, not fail-open** — if the core is unreachable, the backend falls back to an equivalent native policy engine that makes the *same* deny-by-default decisions. a core outage degrades token issuance to unsigned ids; it never grants access that policy would deny.
 
 ## what is out of scope
 
 being honest about the boundaries:
 
-- **demo mode uses mock secrets and an ephemeral signing key.** tokens do not survive a core restart, and the "secrets" are deterministic fakes. set `AGENTGATE_ED25519_SEED` (a 32-byte hex seed) for a stable key, and run in `live` mode with a 1Password service account for real use.
+- **demo mode uses mock secrets and an ephemeral signing key.** tokens do not survive a core restart, and the "secrets" are deterministic fakes. generate a persistent key with `agentgate keygen` and pass it as `AGENTGATE_SIGNING_KEY`, then run in `live` mode with a 1Password service account for real use.
 - **the bearer token is a shared secret.** on its own it authenticates the *caller*, not a specific agent identity. mTLS (`X-Client-CN`) is the stronger path for per-agent identity; the bearer token is the demo-friendly default.
 - **grant state is single-node.** the backend's SQLite store is not designed for multi-region or high-availability deployment as written. the design (stateless crypto in the core, mutable state in the backend) is intended to make that swap — to a shared datastore — straightforward, but it is not implemented here.
 - **no protection against a compromised core.** the core holds the private key and the policy set; it is the root of trust. its host must be secured accordingly.

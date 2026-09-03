@@ -9,10 +9,10 @@ import (
 )
 
 type visitor struct {
-	tokens    float64
-	maxTokens float64
+	tokens     float64
+	maxTokens  float64
 	refillRate float64 // tokens per second
-	lastSeen  time.Time
+	lastSeen   time.Time
 }
 
 type RateLimiter struct {
@@ -41,10 +41,10 @@ func (rl *RateLimiter) Allow(key string) bool {
 	v, exists := rl.visitors[key]
 	if !exists {
 		v = &visitor{
-			tokens:    float64(rl.burst),
-			maxTokens: float64(rl.burst),
+			tokens:     float64(rl.burst),
+			maxTokens:  float64(rl.burst),
 			refillRate: float64(rl.limit) / 60.0,
-			lastSeen:  now,
+			lastSeen:   now,
 		}
 		rl.visitors[key] = v
 	}

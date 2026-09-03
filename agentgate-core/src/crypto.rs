@@ -54,29 +54,63 @@ pub struct TokenEngine {
 }
 
 impl TokenEngine {
-    /// Build an engine from a 32-byte Ed25519 seed (e.g. from `AGENTGATE_ED25519_SEED`).
-    /// A fixed seed yields a stable key id across restarts, so previously issued
-    /// tokens remain verifiable.
-    pub fn from_seed(seed: &[u8]) -> Result<Self, CryptoError> {
-        let key_pair = Ed25519KeyPair::from_seed_unchecked(seed)
-            .map_err(|e| CryptoError::KeyRejected(e.to_string()))?;
+    fn from_key_pair(key_pair: Ed25519KeyPair) -> Self {
         let public_key = key_pair.public_key().as_ref().to_vec();
         let key_id = compute_key_id(&public_key);
-        Ok(Self {
+        Self {
             key_pair,
             public_key,
             key_id,
-        })
+        }
     }
 
-    /// Build an engine with a fresh random key. Tokens will not survive a
-    /// restart — fine for demo mode, not for production.
-    pub fn from_random() -> Result<Self, CryptoError> {
+    /// Load a signing key from a PKCS#8 v2 document (DER encoded).
+    ///
+    /// PKCS#8 is the standard serialization for private keys, so a key written
+    /// by `generate_pkcs8` is readable by other tooling (for example
+    /// `openssl pkey -inform DER`). This is the production path: the operator
+    /// generates a key once, stores the DER file, and points the core at it.
+    pub fn from_pkcs8(pkcs8: &[u8]) -> Result<Self, CryptoError> {
+        // Two encodings exist in the wild and we accept both. PKCS#8 v2
+        // (RFC 5958) carries the public key next to the private key, which lets
+        // ring cross-check that the pair is internally consistent, and it is
+        // what `generate_pkcs8` emits. OpenSSL emits v1 (RFC 5208), which holds
+        // only the private key, so there is nothing to cross-check and the
+        // public key is derived instead. Accepting v1 means a key produced by
+        // `openssl genpkey -algorithm ed25519` loads here unchanged.
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8)
+            .or_else(|_| Ed25519KeyPair::from_pkcs8_maybe_unchecked(pkcs8))
+            .map_err(|e| CryptoError::KeyRejected(e.to_string()))?;
+        Ok(Self::from_key_pair(key_pair))
+    }
+
+    /// Generate a fresh signing key, returning the engine alongside the PKCS#8
+    /// document that must be persisted to reuse the key. Losing the document
+    /// means every previously issued token becomes unverifiable.
+    pub fn generate_pkcs8() -> Result<(Self, Vec<u8>), CryptoError> {
         let rng = SystemRandom::new();
-        let mut seed = [0u8; 32];
-        rng.fill(&mut seed)
+        let doc = Ed25519KeyPair::generate_pkcs8(&rng)
             .map_err(|e| CryptoError::RngFailed(e.to_string()))?;
-        Self::from_seed(&seed)
+        let engine = Self::from_pkcs8(doc.as_ref())?;
+        Ok((engine, doc.as_ref().to_vec()))
+    }
+
+    /// Build an engine from a raw 32-byte Ed25519 seed.
+    ///
+    /// Kept because a raw seed is deterministic, which makes it useful in tests.
+    /// Prefer `from_pkcs8` everywhere else: a bare seed carries no algorithm
+    /// identifier, so nothing about the file tells you what key it holds.
+    pub fn from_seed(seed: &[u8]) -> Result<Self, CryptoError> {
+        let key_pair = Ed25519KeyPair::from_seed_unchecked(seed)
+            .map_err(|e| CryptoError::KeyRejected(e.to_string()))?;
+        Ok(Self::from_key_pair(key_pair))
+    }
+
+    /// Build an engine with a fresh ephemeral key. Tokens will not survive a
+    /// restart, which is fine for demo mode but not for production.
+    pub fn from_random() -> Result<Self, CryptoError> {
+        let (engine, _doc) = Self::generate_pkcs8()?;
+        Ok(engine)
     }
 
     /// Hex-encoded Ed25519 public key. Safe to publish — verifiers use it to
@@ -242,6 +276,45 @@ mod tests {
         assert!(engine.verify("ag2.only-two").is_err());
     }
 
+    #[test]
+    fn pkcs8_roundtrip_preserves_key() {
+        let (a, doc) = TokenEngine::generate_pkcs8().unwrap();
+        let b = TokenEngine::from_pkcs8(&doc).unwrap();
+        assert_eq!(a.key_id(), b.key_id());
+        assert_eq!(a.public_key_hex(), b.public_key_hex());
+        // A token minted before the key was reloaded still verifies after it,
+        // which is the whole point of persisting the PKCS#8 document.
+        let token = a.mint(&sample_payload()).unwrap();
+        assert!(b.verify(&token).is_ok());
+    }
+
+    /// A PKCS#8 v1 (RFC 5208) Ed25519 document, the shape OpenSSL writes: a
+    /// fixed 16-byte header followed by the raw 32-byte seed.
+    fn pkcs8_v1(seed: &[u8; 32]) -> Vec<u8> {
+        let mut der = hex::decode("302e020100300506032b657004220420").unwrap();
+        der.extend_from_slice(seed);
+        der
+    }
+
+    #[test]
+    fn loads_openssl_style_pkcs8_v1() {
+        let seed = [42u8; 32];
+        let from_v1 = TokenEngine::from_pkcs8(&pkcs8_v1(&seed)).unwrap();
+        let from_seed = TokenEngine::from_seed(&seed).unwrap();
+        // Both routes must land on exactly the same key material.
+        assert_eq!(from_v1.key_id(), from_seed.key_id());
+        assert_eq!(from_v1.public_key_hex(), from_seed.public_key_hex());
+
+        let token = from_v1.mint(&sample_payload()).unwrap();
+        assert!(from_seed.verify(&token).is_ok());
+    }
+
+    #[test]
+    fn pkcs8_rejects_malformed_key() {
+        assert!(TokenEngine::from_pkcs8(b"not-a-pkcs8-document").is_err());
+        assert!(TokenEngine::from_pkcs8(&[]).is_err());
+    }
+
     proptest! {
         // Any well-formed set of claims round-trips through mint -> verify
         // unchanged (modulo the key_id the engine stamps in).
@@ -299,6 +372,44 @@ mod tests {
             payload[idx] ^= 1 << bit;
             let mutated = format!("{}.{}.{}", parts[0], hex::encode(&payload), parts[2]);
             prop_assert!(engine.verify(&mutated).is_err());
+        }
+
+        // Fuzz-style robustness. verify() parses attacker-controlled input, which
+        // is exactly where parser bugs turn into vulnerabilities, so it must never
+        // panic regardless of what arrives. proptest fails the case on any panic,
+        // so calling it across thousands of random inputs is the assertion.
+        #[test]
+        fn prop_verify_never_panics_on_arbitrary_text(token in ".{0,256}") {
+            let engine = TokenEngine::from_random().unwrap();
+            let _ = engine.verify(&token);
+        }
+
+        #[test]
+        fn prop_verify_never_panics_on_arbitrary_bytes(
+            bytes in proptest::collection::vec(any::<u8>(), 0..256),
+        ) {
+            let engine = TokenEngine::from_random().unwrap();
+            let _ = engine.verify(&String::from_utf8_lossy(&bytes));
+        }
+
+        // Correct shape, random contents. An attacker who knows the token format
+        // still cannot produce a signature that verifies.
+        #[test]
+        fn prop_random_wellformed_token_rejected(
+            payload in proptest::collection::vec(any::<u8>(), 1..256),
+            sig in proptest::collection::vec(any::<u8>(), 1..128),
+        ) {
+            let engine = TokenEngine::from_random().unwrap();
+            let token = format!("ag2.{}.{}", hex::encode(&payload), hex::encode(&sig));
+            prop_assert!(engine.verify(&token).is_err());
+        }
+
+        // Key loading parses bytes off disk, so it must reject rather than panic.
+        #[test]
+        fn prop_from_pkcs8_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..256),
+        ) {
+            let _ = TokenEngine::from_pkcs8(&bytes);
         }
     }
 }

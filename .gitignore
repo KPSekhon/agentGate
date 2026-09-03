@@ -16,6 +16,10 @@ venv/
 # Environment
 .env
 
+# Signing keys (never commit these)
+*.p8
+*.pem
+
 # Node
 node_modules/
 dashboard/.next/

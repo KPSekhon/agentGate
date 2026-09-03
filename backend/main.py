@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.agent.routes import router as agent_router, set_session_manager
@@ -75,6 +75,33 @@ async def root():
         "mode": settings.mode,
         "docs": "/docs",
     }
+
+
+@app.get("/publickey")
+async def public_key():
+    """Publish the core's Ed25519 verification key.
+
+    Anything that needs to check a grant token can fetch this and verify
+    signatures locally. The public key cannot mint tokens, so exposing it costs
+    nothing and lets verifiers (such as the Go proxy) stay decoupled from the
+    signer.
+    """
+    core = _policy_engine.core_client if _policy_engine else None
+    if core is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "no_core",
+                "reason": "Token signing is handled by the Rust core; set AGENTGATE_CORE_URL.",
+            },
+        )
+    try:
+        return core.public_key()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "core_unreachable", "reason": str(exc)},
+        ) from exc
 
 
 @app.get("/policies", response_model=list[PolicyOut])

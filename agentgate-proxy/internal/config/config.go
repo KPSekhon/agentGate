@@ -16,6 +16,7 @@ type Config struct {
 	TLSKeyFile      string
 	TLSClientCA     string
 	AgentToken      string
+	PublicKeyHex    string
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
@@ -31,6 +32,7 @@ func Load() (*Config, error) {
 		TLSKeyFile:      os.Getenv("AGENTGATE_TLS_KEY"),
 		TLSClientCA:     os.Getenv("AGENTGATE_TLS_CLIENT_CA"),
 		AgentToken:      envOr("AGENTGATE_AGENT_TOKEN", ""),
+		PublicKeyHex:    os.Getenv("AGENTGATE_PUBLIC_KEY"),
 		ReadTimeout:     10 * time.Second,
 		WriteTimeout:    10 * time.Second,
 		ShutdownTimeout: 30 * time.Second,
