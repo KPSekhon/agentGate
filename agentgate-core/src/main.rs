@@ -35,11 +35,19 @@ enum Commands {
         #[arg(long, default_value_t = 10)]
         rate_limit: u32,
 
-        /// Ed25519 signing seed (hex-encoded, 32 bytes). A fixed seed keeps the
-        /// signing key — and therefore previously issued tokens — stable across
-        /// restarts. Omit to generate an ephemeral key (demo mode).
-        #[arg(long, env = "AGENTGATE_ED25519_SEED")]
-        signing_seed: Option<String>,
+        /// Path to a PKCS#8 (DER) Ed25519 signing key, as written by
+        /// `agentgate keygen`. Keeps the signing key, and therefore every
+        /// previously issued token, valid across restarts. Omit to generate an
+        /// ephemeral key (demo mode).
+        #[arg(long, env = "AGENTGATE_SIGNING_KEY")]
+        signing_key: Option<PathBuf>,
+    },
+
+    /// Generate a new Ed25519 signing key in PKCS#8 (DER) format
+    Keygen {
+        /// Where to write the PKCS#8 document
+        #[arg(long, default_value = "agentgate-signing-key.p8")]
+        out: PathBuf,
     },
 
     /// Validate policy files
@@ -83,23 +91,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             addr,
             policy_dir,
             rate_limit,
-            signing_seed,
+            signing_key,
         } => {
-            let token_engine = match signing_seed {
-                Some(hex_seed) => {
-                    let bytes = hex::decode(&hex_seed)?;
-                    if bytes.len() != 32 {
-                        return Err(format!(
-                            "AGENTGATE_ED25519_SEED must be 32 bytes (64 hex chars), got {}",
-                            bytes.len()
-                        )
-                        .into());
-                    }
-                    Arc::new(TokenEngine::from_seed(&bytes)?)
+            let token_engine = match signing_key {
+                Some(path) => {
+                    let der = std::fs::read(&path).map_err(|e| {
+                        format!("could not read signing key {}: {e}", path.display())
+                    })?;
+                    Arc::new(TokenEngine::from_pkcs8(&der)?)
                 }
                 None => {
                     tracing::warn!(
-                        "no signing seed provided — generating ephemeral Ed25519 key (tokens won't survive restarts)"
+                        "no --signing-key provided, generating an ephemeral Ed25519 key (tokens will not survive a restart)"
                     );
                     Arc::new(TokenEngine::from_random()?)
                 }
@@ -139,6 +142,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .add_service(AgentGateServer::new(service))
                 .serve(socket_addr)
                 .await?;
+        }
+
+        Commands::Keygen { out } => {
+            let (engine, doc) = TokenEngine::generate_pkcs8()?;
+            std::fs::write(&out, &doc)
+                .map_err(|e| format!("could not write {}: {e}", out.display()))?;
+
+            println!("wrote PKCS#8 Ed25519 signing key to {}", out.display());
+            println!("  key_id:     {}", engine.key_id());
+            println!("  public_key: {}", engine.public_key_hex());
+            println!();
+            println!("This file is the root of trust. Keep it secret, restrict its");
+            println!("permissions, and never commit it. Start the server with:");
+            println!("  agentgate serve --signing-key {}", out.display());
         }
 
         Commands::PolicyCheck { policy_dir } => {

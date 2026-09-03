@@ -28,6 +28,9 @@ impl AgentGateService {
     }
 }
 
+// Same reason as the proto module: the trait fixes the error type as
+// tonic::Status, so we cannot shrink the Err variant.
+#[allow(clippy::result_large_err)]
 #[tonic::async_trait]
 impl proto::agent_gate_server::AgentGate for AgentGateService {
     async fn request_grant(

@@ -33,7 +33,8 @@ agentgate is a multi-language system. each component is built in the language th
 │  • rate limiting       │
 │  • mTLS termination    │
 │  • bearer auth         │
-│  • structured logging  │
+│  • token verification  │
+│    (public key only)   │
 │  • health / metrics    │
 └───────────┬────────────┘
             │  HTTP (reverse proxy)
@@ -68,7 +69,7 @@ a request flows agent → Go proxy → Python backend → Rust core. the backend
 
 **why this split:**
 - **Rust** is the decision point -- cryptographic token minting/verification and policy evaluation. the security-critical logic, with memory safety and no GC pauses.
-- **Go** is the network edge -- concurrent connection handling, mTLS, rate limiting, and health checks. goroutines make this trivial.
+- **Go** is the network edge -- concurrent connection handling, mTLS, rate limiting, and health checks. it also verifies grant tokens using only the published public key, so forged tokens are dropped before they reach the backend.
 - **Python** is the enforcement point and orchestration layer -- REST API, grant persistence, 1Password SDK, secret resolution, CLI, and dashboard. fast to iterate on, rich ecosystem.
 
 ## how it works
@@ -288,8 +289,8 @@ python demo/quick_demo.py  # 60-second demo
 
 ```bash
 make test          # all tests (rust + go + python)
-make rust-test     # 20 rust tests (incl. property-based crypto tests)
-make go-test       # 8 go tests (rate limiting, auth, middleware)
+make rust-test     # 27 rust tests (incl. property-based + fuzz-style crypto tests)
+make go-test       # 25 go tests (rate limiting, auth, edge token verification)
 make python-test   # 30 python tests (policy, api, anomaly)
 
 # the python -> rust gRPC seam (skips if the core isn't running):
@@ -311,8 +312,11 @@ agentgate policy-eval \
   --task deploy \
   --secret-ref "op://ci-vault/deploy-key/credential"
 
+# generate a PKCS#8 ed25519 signing key
+agentgate keygen --out signing-key.p8
+
 # start the gRPC server
-agentgate serve --addr 0.0.0.0:50051 --policy-dir policies/
+agentgate serve --addr 0.0.0.0:50051 --policy-dir policies/ --signing-key signing-key.p8
 ```
 
 ## api
@@ -321,6 +325,7 @@ agentgate serve --addr 0.0.0.0:50051 --policy-dir policies/
 |--------|------|--------------|
 | `GET` | `/` | server info |
 | `GET` | `/docs` | swagger ui |
+| `GET` | `/publickey` | ed25519 verification key (safe to publish; cannot mint) |
 | `GET` | `/policies` | list loaded policies |
 | `POST` | `/agent/request-secret` | phase 1: get a grant (no secret) |
 | `POST` | `/agent/exchange` | phase 2: trade grant_id for the secret |
@@ -351,7 +356,7 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 
 | variable | default | what it does |
 |----------|---------|--------------|
-| `AGENTGATE_ED25519_SEED` | (random) | hex-encoded 32-byte Ed25519 seed; fixed seed = stable signing key across restarts |
+| `AGENTGATE_SIGNING_KEY` | (ephemeral) | path to a PKCS#8 Ed25519 signing key (`agentgate keygen`); keeps tokens valid across restarts |
 
 **go proxy (`agentgate-proxy`)**
 
@@ -364,13 +369,14 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 | `AGENTGATE_TLS_CERT` | | tls certificate file (enables https) |
 | `AGENTGATE_TLS_KEY` | | tls private key file |
 | `AGENTGATE_TLS_CLIENT_CA` | | client ca for mtls (requires cert+key) |
+| `AGENTGATE_PUBLIC_KEY` | (fetched) | hex ed25519 public key to pin; otherwise fetched from the backend |
 
 ## why it's built this way
 
 - **two-phase flow** -- a leaked grant_id is useless after expiry or consumption. the secret only moves when the agent explicitly asks for it.
 - **deny by default** -- `default.yaml` catches everything at priority 0. you have to opt in to access, not opt out.
 - **secrets never touch disk** -- they exist in memory only. the audit log stores the `op://` reference, never the value.
-- **cryptographic capability tokens** -- with the core wired in, a grant is an `ag2.<payload>.<sig>` token: **Ed25519**-signed claims (requester, secret_ref, expiry, uses, key id) minted by the Rust core. the agent presents it on exchange, and tampered, forged, or expired tokens are rejected at the Rust layer before the backend touches the database. because it's a public-key signature, verifiers need only the **public key** (published over a `PublicKey` RPC) — never the signing key. the token is stateless proof; use-count and revocation are enforced from persistent state. property-based tests assert any single-bit mutation is rejected. full write-up in [SECURITY.md](SECURITY.md).
+- **cryptographic capability tokens** -- with the core wired in, a grant is an `ag2.<payload>.<sig>` token: **Ed25519**-signed claims (requester, secret_ref, expiry, uses, key id) minted by the Rust core. the agent presents it on exchange, and tampered, forged, or expired tokens are rejected at the Rust layer before the backend touches the database. because it's a public-key signature, verifiers need only the **public key** (published over a `PublicKey` RPC) — never the signing key. the token is stateless proof; use-count and revocation are enforced from persistent state. property-based tests assert any single-bit mutation is rejected. full write-up in [SECURITY.md](SECURITY.md), and the reasoning behind each choice is recorded in [docs/adr](docs/adr).
 - **decision/enforcement split** -- the Python backend (PEP) delegates every allow/deny call and all token crypto to the Rust core (PDP) over gRPC, then resolves the secret itself. if the core is unreachable it falls back to an equivalent native engine, so a core outage degrades gracefully instead of taking the broker down.
 - **rate limiting at two levels** -- the Go proxy enforces token-bucket rate limiting at the network edge. the Rust core enforces per-agent limits at the grant layer. both log violations.
 - **mtls for agent identity** -- the Go proxy supports mutual TLS. agents present client certificates, and the proxy extracts the CN and forwards it as `X-Client-CN`. no more shared bearer tokens.

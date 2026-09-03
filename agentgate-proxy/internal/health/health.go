@@ -9,10 +9,10 @@ import (
 )
 
 type Checker struct {
-	backendURL   string
-	ready        atomic.Bool
-	lastCheck    atomic.Value // time.Time
-	client       *http.Client
+	backendURL string
+	ready      atomic.Bool
+	lastCheck  atomic.Value // time.Time
+	client     *http.Client
 }
 
 func NewChecker(backendURL string) *Checker {

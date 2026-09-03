@@ -54,6 +54,13 @@ jobs:
           go-version-file: agentgate-proxy/go.mod
           cache: false  # stdlib-only module, no go.sum to key a cache on
 
+      - name: fmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+
       - name: vet
         run: go vet ./...
 
