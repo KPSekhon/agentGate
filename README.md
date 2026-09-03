@@ -237,6 +237,14 @@ register ssh public keys with metadata. before a key can be used, policy has to 
 
 ## 1password integration
 
+three ways to resolve secrets, picked by `AGENTGATE_MODE`:
+
+| mode | resolver | when |
+|------|----------|------|
+| `demo` | deterministic fakes | no account needed, runs anywhere |
+| `cli` | the 1password cli (`op read`) | local dev — reuses your desktop session and biometric unlock, no service account to mint |
+| `live` | the 1password python sdk | servers and ci — service account tokens are auditable and non-interactive |
+
 - uses the 1password python sdk to resolve secrets from real vaults
 - secret refs use the `op://vault/item/field` uri format
 - audit schema mirrors the 1password events api
@@ -344,7 +352,8 @@ all env vars use the `AGENTGATE_` prefix. or put them in a `.env` file.
 
 | variable | default | what it does |
 |----------|---------|--------------|
-| `AGENTGATE_MODE` | `demo` | `demo` = mock secrets, `live` = real 1password |
+| `AGENTGATE_MODE` | `demo` | `demo` = mock secrets, `cli` = 1password cli (`op`), `live` = 1password sdk |
+| `AGENTGATE_OP_CLI_PATH` | `op` | path to the 1password cli binary (mode=cli) |
 | `AGENTGATE_OP_SERVICE_ACCOUNT_TOKEN` | | 1password token (required for live mode) |
 | `AGENTGATE_AGENT_TOKEN` | `demo-token-12345` | bearer token for api auth |
 | `AGENTGATE_DB_URL` | `sqlite+aiosqlite:///./agentgate.db` | database url |
